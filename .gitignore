@@ -1,0 +1,7 @@
+/target/
+/artifacts/
+/workspaces/
+/.mesh/
+/sessions/
+/.playwright-mcp/
+/*.log

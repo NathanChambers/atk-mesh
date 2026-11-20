@@ -1,0 +1,21 @@
+[package]
+name = "gpt-mesh"
+version = "0.1.0"
+edition = "2024"
+description = "Local mesh editing server, JSON command-line client, and browser viewer"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/NathanChambers/mesh-workbench"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+png = "0.17.16"
+
+[[bin]]
+name = "mesh-server"
+path = "src/server.rs"
+
+[[bin]]
+name = "mesh-cli"
+path = "src/cli.rs"

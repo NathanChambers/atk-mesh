@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#171a20">
+    <title>Mesh workspace</title>
+    <link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+    <main id="viewer">
+        <canvas id="viewport" tabindex="0" aria-label="3D model. Drag to orbit, right-drag to pan, scroll to zoom."></canvas>
+        <header>
+            <div class="workspace" aria-label="Model workspace">
+                <button id="workspace-open" type="button" aria-label="Switch workspace" aria-haspopup="dialog" aria-controls="workspace-picker" aria-keyshortcuts="Control+p" title="Switch workspace (Ctrl+P)" hidden>
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v12H3Z"/></svg>
+                </button>
+                <div class="workspace-info">
+                    <span id="workspace-path">Loading workspace…</span>
+                    <div class="connection" role="status"><span id="connection-dot"></span><span id="connection">Connecting</span><span id="revision"></span></div>
+                </div>
+            </div>
+            <nav class="viewer-modes control-group" aria-label="Viewer mode">
+                <button type="button" data-viewer-mode="mesh" aria-pressed="true">Mesh</button>
+                <button type="button" data-viewer-mode="animation" aria-pressed="false">Animation</button>
+            </nav>
+            <div class="header-actions control-group" role="group" aria-label="Render and settings">
+                <button class="icon-control" type="button" data-render-mode="topology" aria-pressed="false" aria-label="Wireframe" title="Wireframe">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm-8 4.5 8 4.5 8-4.5M12 12v9"/></svg>
+                </button>
+                <button class="icon-control" type="button" data-render-mode="shaded" aria-pressed="true" aria-label="Shaded" title="Shaded">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path class="icon-fill" d="M12 4a8 8 0 0 1 0 16Z"/></svg>
+                </button>
+                <button class="icon-control" type="button" data-render-mode="vertex_color_shaded" aria-pressed="false" aria-label="Shaded vertex colors" title="Shaded vertex colors">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 5 7 13H5Z"/><circle class="icon-fill" cx="12" cy="5" r="1.75"/><circle class="icon-fill" cx="19" cy="18" r="1.75"/><circle class="icon-fill" cx="5" cy="18" r="1.75"/></svg>
+                </button>
+                <button class="icon-control" type="button" data-render-mode="material" aria-pressed="false" aria-label="Textured lit" title="Textured lit">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path class="icon-fill" d="M4 12h8v8H6l-2-2Zm8-8h6l2 2v6h-8Z"/></svg>
+                </button>
+                <details id="debug-views" class="toolbar-disclosure">
+                    <summary class="icon-control" aria-label="Debug" title="Debug views">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg>
+                    </summary>
+                    <div class="toolbar-popover" role="group" aria-label="Debug views">
+                        <button type="button" data-render-mode="normals" aria-pressed="false">Normals</button>
+                        <button type="button" data-render-mode="depth" aria-pressed="false">Depth</button>
+                        <button type="button" data-render-mode="silhouette" aria-pressed="false">Silhouette</button>
+                        <button type="button" data-render-mode="orientation" aria-pressed="false">Face orientation</button>
+                        <button type="button" data-render-mode="face_ids" aria-pressed="false">Face IDs</button>
+                        <button type="button" data-render-mode="object_ids" aria-pressed="false">Object IDs</button>
+                        <button type="button" data-render-mode="collection_ids" aria-pressed="false">Collection IDs</button>
+                        <button type="button" data-render-mode="uv_checker" aria-pressed="false">UV checker</button>
+                        <button type="button" data-render-mode="textured" aria-pressed="false">Base color</button>
+                        <button type="button" data-render-mode="vertex_colors" aria-pressed="false">Unlit vertex color</button>
+                    </div>
+                </details>
+                <details id="viewer-settings" class="toolbar-disclosure">
+                    <summary id="settings-button" class="icon-control" aria-label="Settings" title="Settings">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><path class="icon-knob" d="M8 5v4m8 1v4m-6 1v4"/></svg>
+                    </summary>
+                    <div class="toolbar-popover" role="group" aria-label="Viewer settings">
+                        <button id="grid" type="button" aria-pressed="false">Grid</button>
+                        <button id="turntable" type="button" aria-pressed="false">Auto rotate</button>
+                        <button id="objects-open" type="button" aria-expanded="false" aria-controls="objects-panel" disabled>Objects</button>
+                        <button id="replay-open" type="button" aria-expanded="false" aria-controls="replay-panel" disabled>Replay</button>
+                    </div>
+                </details>
+            </div>
+        </header>
+        <dialog id="workspace-picker" aria-label="Switch workspace">
+            <input id="workspace-search" type="text" role="combobox" aria-label="Search workspaces" aria-controls="workspace-results" aria-expanded="true" autocomplete="off" spellcheck="false" placeholder="Search workspaces…" autofocus>
+            <div id="workspace-results" role="listbox" aria-label="Workspaces"></div>
+            <p id="workspace-empty" role="status" hidden>No matching workspaces.</p>
+        </dialog>
+        <dialog id="animation-clip-picker" aria-label="Choose animation clip">
+            <input id="animation-clip-search" type="text" role="combobox" aria-label="Search animation clips" aria-controls="animation-clip-results" aria-expanded="true" autocomplete="off" placeholder="Search clips…" autofocus>
+            <div id="animation-clip-results" role="listbox" aria-label="Animation clips"></div>
+            <p id="animation-empty" role="status" hidden>No matching clips</p>
+        </dialog>
+        <div id="notice" role="status">Loading model…</div>
+        <aside id="objects-panel" hidden aria-label="Object inspector">
+            <div class="replay-heading"><strong>Objects</strong><button id="objects-close" type="button">Close</button></div>
+            <label class="replay-search">Find <input id="objects-search" type="search" placeholder="Collection, object name or ID…"></label>
+            <div class="object-actions"><button id="objects-show-all" type="button">Show all</button><button id="objects-hide-filtered" type="button">Hide matching</button><button id="objects-isolate-filtered" type="button">Solo matching</button></div>
+            <div id="objects-summary" role="status"></div>
+            <div id="objects-list" aria-label="Collections and objects"></div>
+            <p id="objects-empty" hidden>No matching objects.</p>
+            <p class="object-hint">Objects may appear in multiple collections. Collection swatches match Collection IDs mode; object swatches match Object IDs mode. Visibility is local to this viewer; exports and CLI captures are unchanged.</p>
+        </aside>
+        <aside id="replay-panel" hidden aria-label="Session replay">
+            <div class="replay-heading"><strong>Session replay</strong><button id="replay-close" type="button">Close</button></div>
+            <select id="session-list" aria-label="Recorded session"></select>
+            <div class="replay-transport"><button id="replay-previous" type="button">Previous</button><button id="replay-play" type="button">Play</button><button id="replay-next" type="button">Next</button><button id="replay-live" type="button">Go live</button></div>
+            <input id="replay-position" type="range" min="0" max="0" value="0" aria-label="Command position">
+            <label class="replay-search">Find commands <input id="replay-search" type="search" placeholder="Command, ID or status…"></label>
+            <div id="replay-summary" role="status"></div>
+            <div id="replay-events" aria-label="Recorded commands"></div>
+            <img id="replay-capture" hidden alt="Render returned by the selected capture command">
+            <div class="replay-detail-tabs" role="group" aria-label="Command details">
+                <button id="replay-input-tab" type="button" aria-pressed="true">Agent command</button>
+                <button id="replay-output-tab" type="button" aria-pressed="false">Reply</button>
+                <button id="replay-full-tab" type="button" aria-pressed="false">Full result</button>
+            </div>
+            <pre id="replay-detail" tabindex="0">Choose a command to inspect its input and output.</pre>
+            <a id="replay-download" download="mesh-event.json">Download selected event</a>
+        </aside>
+        <footer>
+            <div class="metadata"><strong id="model-name">Live model</strong><span id="statistics">Waiting for geometry</span><button id="return-to-latest" type="button" hidden>Return to latest</button></div>
+            <div id="animation-controls" role="group" aria-label="Animation tools" hidden>
+                <div class="clip-control">
+                    <button id="animation-clip-open" class="icon-control" type="button" aria-label="Choose animation clip" aria-haspopup="dialog" aria-controls="animation-clip-picker" title="Choose animation clip" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg></button>
+                    <span id="animation-clip-name" title="Rest pose">Rest pose</span>
+                </div>
+                <div class="rig-display" role="group" aria-label="Rig display">
+                    <button id="animation-bones" class="icon-control" type="button" aria-label="Bones" title="Bones" aria-pressed="false" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 20 4-9 12-7-7 12-9 4Zm0 0 7-7 9-9M8 11l5 5"/></svg></button>
+                    <button id="animation-hierarchy" class="icon-control" type="button" aria-label="Hierarchy" title="Hierarchy" aria-pressed="false" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 8v4m-6 4v-4h12v4"/><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/></svg></button>
+                    <button id="animation-joints" class="icon-control" type="button" aria-label="Joints" title="Joints" aria-pressed="false" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><circle class="icon-fill" cx="12" cy="12" r="2"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2"/></svg></button>
+                    <button id="animation-mesh" class="icon-control" type="button" aria-label="Show mesh" title="Show mesh" aria-pressed="true"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm-8 4.5 8 4.5 8-4.5M12 12v9"/></svg></button>
+                </div>
+                <div class="timeline" role="group" aria-label="Playback">
+                    <button id="animation-play" type="button" disabled>Play</button>
+                    <input id="animation-time" type="range" min="0" max="1" value="0" step="any" aria-label="Animation time" disabled>
+                </div>
+            </div>
+            <div class="instructions">Drag to orbit <span>·</span> Right-drag to pan<br>Scroll to zoom</div>
+        </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+</body>
+</html>
