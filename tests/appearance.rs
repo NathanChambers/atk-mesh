@@ -150,6 +150,41 @@ fn cpu_captures_show_texture_orientation_tiling_vertex_paint_and_missing_uvs() {
 }
 
 #[test]
+fn cutout_pixels_reveal_geometry_behind_and_export_as_a_masked_glb_material() {
+    let mut document = Document::default();
+    front_uvs(&mut document);
+    let pixels = base64::encode(&[255, 0, 0, 0, 0, 255, 0, 160]);
+    document.execute(json!({"command":"texture_define","name":"cutout","width":2,"height":1,"rgba_base64":pixels,"alpha_cutoff":0.5})).unwrap();
+    document.execute(json!({"command":"texture_assign","faces":[2],"texture":"cutout"})).unwrap();
+    let request = json!({"command":"capture","mode":"textured","yaw":0,"pitch":0,"zoom":200,"width":128,"height":128});
+    let (width, pixels) = image(&document.execute(request.clone()).unwrap());
+    let pixel = |x| &pixels[(56 * width + x) * 3..(56 * width + x) * 3 + 3];
+    assert_eq!(pixel(56_usize), [255, 0, 255], "missing UVs on the back face are visible through the cutout");
+    assert_eq!(pixel(72_usize), [0, 255, 0], "retained pixels use their source RGB");
+
+    let mut material = request;
+    material["mode"] = json!("material");
+    let (_, pixels) = image(&document.execute(material).unwrap());
+    assert_eq!(&pixels[(56 * width + 56) * 3..(56 * width + 56) * 3 + 3], [255, 0, 255]);
+
+    document.execute(json!({"command":"rig_set","rig":{"bones":[{"name":"root","position":[0,0,0]}],"weights":{}}})).unwrap();
+    let exported = document.execute(json!({"command":"export","format":"glb"})).unwrap();
+    let bytes = base64::decode(exported["glb_base64"].as_str().unwrap()).unwrap();
+    let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let glb: Value = serde_json::from_slice(&bytes[20..20 + length]).unwrap();
+    assert_eq!(glb["materials"][0]["alphaMode"], "MASK");
+    assert_eq!(glb["materials"][0]["alphaCutoff"], 0.5);
+    let primitives = glb["meshes"][0]["primitives"].as_array().unwrap();
+    assert_eq!(primitives.len(), 2);
+    assert!(primitives[0]["material"].is_null());
+    assert_eq!(primitives[1]["material"], 0);
+    assert!(primitives[1]["attributes"]["TEXCOORD_0"].is_number());
+    let view = glb["images"][0]["bufferView"].as_u64().unwrap() as usize;
+    let offset = glb["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+    assert_eq!(&bytes[28 + length + offset..][..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
 fn copies_instances_and_topology_edits_preserve_known_bindings_without_inventing_new_ones() {
     let mut document = Document::default();
     front_uvs(&mut document);

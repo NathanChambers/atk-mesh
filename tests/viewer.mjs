@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setMaxListeners } from 'node:events';
-import { buildMeshData, buildCornerNormals, cameraMatrix, measureMesh, perspective, facePalette, triangulateFace } from '../web/geometry.js';
+import { buildMeshData, buildCornerNormals, cameraMatrix, measureMesh, orthographic, perspective, facePalette, triangulateFace } from '../web/geometry.js';
 import { ModelViewer } from '../web/renderer.js';
 import { createAnimationSampler } from '../web/animation.js';
 import { SessionReplay } from '../web/replay.js';
@@ -91,6 +91,20 @@ test('camera puts target in front and perspective maps it inside the clip volume
     const clipDepth = projection[10] * -4 + projection[14];
     assert.ok(clipDepth / 4 > -1 && clipDepth / 4 < 1);
     for (const value of [...matrix, ...projection]) { assert.ok(Number.isFinite(value)); }
+});
+
+test('orthographic axis views keep parallel lines parallel and have a stable basis at the poles', () => {
+    const projection = orthographic(2, 2, -10, 10);
+    assert.equal(projection[0], 0.25);
+    assert.equal(projection[5], 0.5);
+    assert.equal(projection[11], 0);
+    assert.equal(projection[15], 1);
+    for (const direction of [-1, 1]) {
+        const matrix = cameraMatrix([2, 3 + 4 * direction, 5], [2, 3, 5]);
+        assert.ok(matrix.every(Number.isFinite));
+        assert.equal(matrix[0], 1);
+        assert.equal(matrix[6], direction);
+    }
 });
 
 function objectMesh() {

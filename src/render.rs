@@ -427,11 +427,11 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                                 .sum()
                         });
                         if options.mode == Mode::VertexColors {
-                            return paint
-                                .map(|channel| (channel * 255.0).round().clamp(0.0, 255.0) as u8);
+                            return Some(paint
+                                .map(|channel| (channel * 255.0).round().clamp(0.0, 255.0) as u8));
                         }
                         if !complete_uv {
-                            return [255, 0, 255];
+                            return Some([255, 0, 255]);
                         }
                         let uv = std::array::from_fn(|axis| {
                             (0..3)
@@ -441,6 +441,9 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                                 .sum()
                         });
                         if options.mode == Mode::Material {
+                            if material.is_some_and(|material| material.masked(uv)) {
+                                return None;
+                            }
                             let smooth = crate::normals::unit(std::array::from_fn(|axis| {
                                 (0..3)
                                     .map(|corner| normals[corner][axis] * original_weights[corner])
@@ -455,19 +458,23 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                                     .sum()
                             });
                             let toward = view.camera.toward(position);
-                            return crate::material::shade(
+                            return Some(crate::material::shade(
                                 material,
                                 uv,
                                 paint,
                                 smooth,
                                 tangent_frame,
                                 toward,
-                            );
+                            ));
                         }
-                        return if options.mode == Mode::UvChecker {
+                        return Some(if options.mode == Mode::UvChecker {
                             crate::uv::checker(uv)
                         } else if let Some((texture, data)) = texture {
-                            let color = crate::uv::sample(texture, data, uv);
+                            let index = crate::uv::texel_offset(texture.width, texture.height, uv);
+                            if crate::uv::below_cutoff(texture.alpha_cutoff, data[index + 3]) {
+                                return None;
+                            }
+                            let color = crate::uv::sample(texture, data, uv, texture.alpha_cutoff.is_none());
                             std::array::from_fn(|axis| {
                                 (f64::from(color[axis]) * paint[axis])
                                     .round()
@@ -475,7 +482,7 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                             })
                         } else {
                             [128; 3]
-                        };
+                        });
                     }
                     let smooth = crate::normals::unit(std::array::from_fn(|axis| {
                         (0..3).map(|i| normals[i][axis] * original_weights[i]).sum()
@@ -485,14 +492,14 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                     } else {
                         smooth
                     };
-                    shade(
+                    Some(shade(
                         normal,
                         view.camera.linear_depth(depth),
                         toward_camera,
                         options.mode,
                         range,
                         face_color,
-                    )
+                    ))
                 });
             }
         }
@@ -670,7 +677,7 @@ impl Canvas {
         &mut self,
         points: [[f64; 3]; 3],
         face_id: u64,
-        color: impl Fn(f64, [f64; 3]) -> [u8; 3],
+        color: impl Fn(f64, [f64; 3]) -> Option<[u8; 3]>,
     ) {
         let [a, b, c] = points;
         let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
@@ -698,11 +705,12 @@ impl Canvas {
                 if depth <= self.depths[index] {
                     continue;
                 }
+                let Some(color) = color(depth, [u, v, w]) else { continue };
 
                 self.depths[index] = depth;
                 self.face_ids[index] = face_id;
                 self.occupied[index] = true;
-                self.pixels[index * 3..index * 3 + 3].copy_from_slice(&color(depth, [u, v, w]));
+                self.pixels[index * 3..index * 3 + 3].copy_from_slice(&color);
             }
         }
     }

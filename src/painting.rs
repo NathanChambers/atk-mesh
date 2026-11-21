@@ -807,6 +807,7 @@ fn bake(texture: &mut Texture) -> Result<(), String> {
         width: texture.width,
         height: texture.height,
         rgba_base64: texture.rgba_base64.clone(),
+        alpha_cutoff: None,
         maps: BTreeMap::new(),
         paint: None,
     };

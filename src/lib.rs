@@ -14,6 +14,7 @@ mod connected;
 mod construction;
 mod diagnostics;
 mod fbx;
+mod fbx_import;
 mod geometry;
 mod glb;
 mod help;
@@ -265,7 +266,9 @@ impl Document {
                 let mut warnings = Vec::new();
                 if format == "stl" {
                     warnings.push("STL contains triangle geometry only. Import using millimeters.");
-                } else if !self.mesh.face_textures.is_empty() {
+                } else if self.mesh.face_textures.iter().any(|(face, name)| {
+                    format != "glb" || self.mesh.textures[name].alpha_cutoff.is_none() || !uv::complete(&self.mesh, *face)
+                }) {
                     warnings.push("UV coordinates and vertex colors are exported. Texture image bindings remain in the native project; export images separately with texture_export and bind them in the consuming application.");
                 }
                 if self.mesh.rig.is_some() && format != "glb" {
@@ -534,6 +537,7 @@ impl Document {
             "object_join" => return cleanup::join(&mut self.mesh, request).map(Some),
             "delete_faces" => return cleanup::delete_faces(&mut self.mesh, request).map(Some),
             "import_glb" => return glb::import(&mut self.mesh, request).map(Some),
+            "import_fbx" => return fbx_import::import(&mut self.mesh, request).map(Some),
             "move_in_view" => {
                 let camera = if let Some(id) = request.get("view_id") {
                     let view = self

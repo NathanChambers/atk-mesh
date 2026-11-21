@@ -6,7 +6,7 @@ Mesh Workbench is a local 3D modeling CLI designed for AI agents. An agent sends
 
 - **Model and inspect** meshes with geometry editing, topology views, measurements, and reference overlays.
 - **Preview materials and animation** with textures, vertex colors, clip playback, and rig overlays.
-- **Save and review your work** in native workspaces with command replay. Export OBJ, FBX, GLB, or mesh-only STL for CAD and 3D printing.
+- **Bring in existing geometry** from FBX or GLB. Save and review your work in native workspaces with command replay, and export OBJ, FBX, GLB, or mesh-only STL.
 
 ## Install
 
@@ -38,10 +38,16 @@ In a second terminal, create a box and save a preview image. This example uses P
 Start the project viewer from the same project directory in another terminal.
 
 ```sh
-mesh-server --project . --port 7878
+mesh-server --port 7878
 ```
 
+To view a different directory, pass it as a path, for example `mesh-server "D:/Game Assets"`. You can also use `--project ROOT`.
+
 Open [the local viewer](http://127.0.0.1:7878), click the folder icon, and select `.mesh/quickstart`. The editor on port 7879 saves changes to the workspace. The viewer on port 7878 displays the saved model and its replay history.
+
+## Import an existing mesh
+
+To import a static FBX, place it inside the editor's workspace and send `{"command":"import_fbx","path":"cargo.fbx"}` to the editor. Use `import_glb` for static GLB geometry. [Import details](docs/command-reference.md)
 
 ## Built-in help
 

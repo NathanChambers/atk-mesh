@@ -65,6 +65,18 @@
                         <button id="replay-open" type="button" aria-expanded="false" aria-controls="replay-panel" disabled>Replay</button>
                     </div>
                 </details>
+                <div id="camera-gizmo" role="group" aria-label="Camera view">
+                    <div class="camera-axes" role="group" aria-label="Snap to axis">
+                        <div id="camera-axis-lines" aria-hidden="true"></div>
+                        <button id="camera-right" type="button" class="camera-axis axis-x" aria-label="Right (+X)" title="Right (+X)">X</button>
+                        <button id="camera-left" type="button" class="camera-axis axis-x" aria-label="Left (−X)" title="Left (−X)">−X</button>
+                        <button id="camera-top" type="button" class="camera-axis axis-y" aria-label="Top (+Y)" title="Top (+Y)">Y</button>
+                        <button id="camera-bottom" type="button" class="camera-axis axis-y" aria-label="Bottom (−Y)" title="Bottom (−Y)">−Y</button>
+                        <button id="camera-front" type="button" class="camera-axis axis-z" aria-label="Front (+Z)" title="Front (+Z)">Z</button>
+                        <button id="camera-back" type="button" class="camera-axis axis-z" aria-label="Back (−Z)" title="Back (−Z)">−Z</button>
+                    </div>
+                    <button id="orthographic" type="button" aria-label="Orthographic projection" aria-pressed="false" title="Switch to orthographic projection">Perspective</button>
+                </div>
             </div>
         </header>
         <dialog id="workspace-picker" aria-label="Switch workspace">

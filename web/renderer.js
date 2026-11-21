@@ -1,4 +1,4 @@
-import { buildMeshData, cameraMatrix, measureMesh, perspective } from './geometry.js';
+import { buildMeshData, cameraMatrix, measureMesh, orthographic, perspective } from './geometry.js';
 import { boneDisplayPoints } from './animation.js';
 
 const vertexSource = `#version 300 es
@@ -41,6 +41,7 @@ in vec3 surfaceUv;
 in vec3 surfacePaint;
 uniform sampler2D textureImage;
 uniform bool hasTexture;
+uniform float alphaCutoff;
 uniform sampler2D normalImage;
 uniform sampler2D roughnessImage;
 uniform sampler2D metallicImage;
@@ -98,7 +99,7 @@ void main() {
         if (surfaceUv.z < 0.5) { color = vec4(1.0, 0.0, 1.0, 1.0); return; }
         vec2 coordinates = vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y));
         vec4 texel = hasTexture ? texture(textureImage, coordinates) : vec4(vec3(0.5), 1.0);
-        vec3 base = pow(mix(vec3(128.0 / 255.0), texel.rgb, texel.a) * surfacePaint, vec3(2.2));
+        vec3 base = pow(mix(vec3(128.0 / 255.0), texel.rgb, alphaCutoff >= 0.0 ? 1.0 : texel.a) * surfacePaint, vec3(2.2));
         float roughness = clamp(hasRoughness ? texture(roughnessImage, coordinates).r : 0.65, 0.04, 1.0);
         float metallic = hasMetallic ? texture(metallicImage, coordinates).r : 0.0;
         vec3 specular = hasSpecular ? texture(specularImage, coordinates).rgb : vec3(0.04);
@@ -131,6 +132,7 @@ void main() {
         float ambient = 0.20 + 0.15 * (n.y * 0.5 + 0.5);
         vec3 f0 = mix(specular, base, metallic);
         vec3 linearColor = base * (ambient + (1.0 - metallic) * diffuse) + f0 * highlight;
+        if (texel.a < alphaCutoff) { discard; }
         color = vec4(pow(linearColor / (linearColor + vec3(0.65)), vec3(1.0 / 2.2)), 1.0);
         return;
     }
@@ -142,7 +144,8 @@ void main() {
             color = vec4(vec3(odd > 0.5 ? 48.0 / 255.0 : 224.0 / 255.0), 1.0);
         } else if (hasTexture) {
             vec4 texel = texture(textureImage, vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y)));
-            color = vec4(mix(vec3(128.0 / 255.0), texel.rgb, texel.a) * surfacePaint, 1.0);
+            if (texel.a < alphaCutoff) { discard; }
+            color = vec4(mix(vec3(128.0 / 255.0), texel.rgb, alphaCutoff >= 0.0 ? 1.0 : texel.a) * surfacePaint, 1.0);
         } else { color = vec4(vec3(128.0 / 255.0), 1.0); }
         return;
     }
@@ -186,7 +189,7 @@ export class ModelViewer {
 
         this.program = this.createProgram();
         this.locations = {};
-        for (const name of ['projection', 'camera', 'eye', 'mode', 'showGrid', 'groundCenter', 'groundRadius', 'surfaceMode', 'towardCamera', 'depthRange', 'textureImage', 'hasTexture', 'normalImage', 'roughnessImage', 'metallicImage', 'specularImage', 'hasNormal', 'hasRoughness', 'hasMetallic', 'hasSpecular']) {
+        for (const name of ['projection', 'camera', 'eye', 'mode', 'showGrid', 'groundCenter', 'groundRadius', 'surfaceMode', 'towardCamera', 'depthRange', 'textureImage', 'hasTexture', 'alphaCutoff', 'normalImage', 'roughnessImage', 'metallicImage', 'specularImage', 'hasNormal', 'hasRoughness', 'hasMetallic', 'hasSpecular']) {
             this.locations[name] = this.gl.getUniformLocation(this.program, name);
         }
         this.mesh = null;
@@ -205,6 +208,7 @@ export class ModelViewer {
         this.distance = 3.5;
         this.yaw = Math.PI / 4;
         this.pitch = 0.22;
+        this.orthographic = false;
         this.grid = false;
         this.turntable = false;
         this.wireframe = false;
@@ -321,7 +325,7 @@ export class ModelViewer {
                 const pixels = Uint8Array.from(atob(texture.maps[channel]), character => character.charCodeAt(0));
                 maps[channel] = this.createTexture(texture.width, texture.height, pixels);
             }
-            this.textures.set(name, { handle, maps, key: JSON.stringify(texture) });
+            this.textures.set(name, { handle, maps, alphaCutoff: texture.alpha_cutoff ?? -1, key: JSON.stringify(texture) });
         }
     }
 
@@ -522,7 +526,7 @@ export class ModelViewer {
 
     saveCamera() {
         const target = this.target.map((value, axis) => this.origin[axis] + value * this.scale);
-        return { target, distance: this.distance * this.scale, yaw: this.yaw, pitch: this.pitch };
+        return { target, distance: this.distance * this.scale, yaw: this.yaw, pitch: this.pitch, orthographic: this.orthographic };
     }
 
     restoreCamera(camera) {
@@ -536,7 +540,19 @@ export class ModelViewer {
         this.target = localTarget;
         this.distance = localDistance;
         this.yaw = yaw;
-        this.pitch = Math.max(-1.5, Math.min(1.5, pitch));
+        this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
+        this.orthographic = camera.orthographic === true;
+        this.dirty = true;
+    }
+
+    setCameraAngles(yaw, pitch) {
+        this.yaw = yaw;
+        this.pitch = pitch;
+        this.dirty = true;
+    }
+
+    setOrthographic(enabled) {
+        this.orthographic = enabled;
         this.dirty = true;
     }
 
@@ -653,16 +669,18 @@ export class ModelViewer {
         if (this.bounds === null) { return; }
 
         const eye = [this.target[0] + Math.sin(this.yaw) * Math.cos(this.pitch) * this.distance, this.target[1] + Math.sin(this.pitch) * this.distance, this.target[2] + Math.cos(this.yaw) * Math.cos(this.pitch) * this.distance];
-        const camera = cameraMatrix(eye, this.target);
+        const camera = cameraMatrix(eye, this.target, this.yaw);
         const centerDistance = Math.hypot(...eye.map((value, axis) => value - this.bounds.center[axis]));
         const near = Math.max(this.bounds.radius * 0.0001, centerDistance - this.bounds.radius * 1.5);
         const far = Math.max(near + 1, centerDistance + this.bounds.radius * 100);
-        const projection = perspective(Math.PI / 4, this.canvas.width / this.canvas.height, near, far);
+        const aspect = this.canvas.width / this.canvas.height;
+        const projection = this.orthographic ? orthographic(this.distance * Math.tan(Math.PI / 8), aspect, -far, far) : perspective(Math.PI / 4, aspect, near, far);
         gl.useProgram(this.program);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.fallbackTexture);
         gl.uniform1i(this.locations.textureImage, 0);
         gl.uniform1i(this.locations.hasTexture, false);
+        gl.uniform1f(this.locations.alphaCutoff, -1);
         for (const name of ['hasNormal', 'hasRoughness', 'hasMetallic', 'hasSpecular']) { gl.uniform1i(this.locations[name], false); }
         gl.uniformMatrix4fv(this.locations.projection, false, projection);
         gl.uniformMatrix4fv(this.locations.camera, false, camera);
@@ -693,7 +711,7 @@ export class ModelViewer {
         gl.disable(gl.CULL_FACE);
         const litSurface = surfaceMode === 0 || surfaceMode === 11 || surfaceMode === 12;
         if (litSurface === true && eye[1] > this.bounds.groundY) {
-            const groundProjection = perspective(Math.PI / 4, this.canvas.width / this.canvas.height, this.bounds.radius * 0.001, far);
+            const groundProjection = this.orthographic ? projection : perspective(Math.PI / 4, aspect, this.bounds.radius * 0.001, far);
             gl.uniformMatrix4fv(this.locations.projection, false, groundProjection);
             gl.depthMask(false);
             gl.uniform1i(this.locations.mode, 1);
@@ -748,6 +766,7 @@ export class ModelViewer {
                 this.gl.activeTexture(this.gl.TEXTURE0);
                 this.gl.bindTexture(this.gl.TEXTURE_2D, texture?.handle || this.fallbackTexture);
                 this.gl.uniform1i(this.locations.hasTexture, texture !== undefined);
+                this.gl.uniform1f(this.locations.alphaCutoff, texture?.alphaCutoff ?? -1);
                 for (const [index, channel] of ['normal', 'roughness', 'metallic', 'specular'].entries()) {
                     const handle = texture?.maps?.[channel];
                     const title = channel[0].toUpperCase() + channel.slice(1);

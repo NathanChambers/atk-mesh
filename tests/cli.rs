@@ -66,7 +66,7 @@ fn start_server_at(project_mode: bool, workspace: Option<PathBuf>, seed_cube: bo
         .args(["--port", &port.to_string()]);
     if project_mode {
         std::fs::create_dir(&workspace).unwrap();
-        command.arg("--headless").current_dir(&workspace);
+        command.arg("--headless").arg(&workspace);
     } else {
         if seed_cube {
             common::write_cube_project(&workspace);
@@ -115,6 +115,84 @@ fn get_with_headers(port: u16, path: &str, request_headers: &str) -> (u16, Strin
 fn get_json(port: u16, path: &str) -> (u16, Value) {
     let (status, body) = get(port, path);
     (status, serde_json::from_str(&body).unwrap())
+}
+
+#[test]
+fn cli_imports_binary_fbx_and_persists_editable_geometry() {
+    let mut source = gpt_mesh::Document::default();
+    source.execute(serde_json::json!({"command":"object_create_box","name":"Cargo","min":[2,0,0],"max":[3,1,1],"origin":[2,0,0]})).unwrap();
+    let exported = source.execute(serde_json::json!({"command":"export","format":"fbx"})).unwrap();
+    let bytes = gpt_mesh::base64::decode(exported["fbx_base64"].as_str().unwrap()).unwrap();
+
+    let (server, port) = start_server_at(false, None, false);
+    std::fs::write(server.workspace.join("cargo.fbx"), bytes).unwrap();
+    let output = invoke(port, &[], r#"{"command":"import_fbx","path":"cargo.fbx","response":"full"}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let response = reply(&output);
+    assert_eq!(response["result"]["operation"]["vertices"], 16);
+    assert_eq!(response["result"]["operation"]["faces"], 12);
+    let mesh = &response["result"]["mesh"];
+    assert_eq!(mesh["objects"]["2"]["name"], "Cargo");
+    assert_eq!(mesh["objects"]["2"]["origin"], serde_json::json!([2.0,0.0,0.0]));
+    assert_eq!(mesh["vertices"]["9"], serde_json::json!([2.0,0.0,0.0]));
+    assert_eq!(mesh["faces"]["7"].as_array().unwrap().len(), 4);
+    let saved: Value = serde_json::from_slice(&std::fs::read(server.workspace.join("project.json")).unwrap()).unwrap();
+    assert_eq!(&saved["mesh"], mesh);
+
+    std::fs::write(server.workspace.join("broken.fbx"), b"not an FBX file").unwrap();
+    let rejected = invoke(port, &[], r#"{"command":"import_fbx","path":"broken.fbx"}"#);
+    assert_eq!(rejected.status.code(), Some(1));
+    let (_, state) = get_json(port, "/state");
+    assert_eq!(&state["result"]["mesh"], mesh);
+    let undone = invoke(port, &[], r#"{"command":"undo","response":"full"}"#);
+    assert_eq!(reply(&undone)["result"]["mesh"]["objects"], serde_json::json!({}));
+}
+
+#[test]
+fn cli_imports_ascii_fbx_with_units_and_mirrored_winding() {
+    let (server, port) = start_server_at(false, None, false);
+    let ascii = r#"; FBX 7.4.0 project file
+FBXHeaderExtension: {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+}
+GlobalSettings: {
+    Properties70: {
+        P: "UpAxis", "int", "Integer", "", 1
+        P: "UpAxisSign", "int", "Integer", "", 1
+        P: "FrontAxis", "int", "Integer", "", 2
+        P: "FrontAxisSign", "int", "Integer", "", 1
+        P: "CoordAxis", "int", "Integer", "", 0
+        P: "CoordAxisSign", "int", "Integer", "", 1
+        P: "UnitScaleFactor", "double", "Number", "", 1
+    }
+}
+Objects: {
+    Geometry: 100, "Geometry::Panel", "Mesh" {
+        Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }
+        PolygonVertexIndex: *3 { a: 0,1,-3 }
+    }
+    Model: 200, "Model::Panel", "Mesh" {
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 200,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", -1,1,1
+        }
+    }
+}
+Connections: {
+    C: "OO",100,200
+    C: "OO",200,0
+}
+"#;
+    std::fs::write(server.workspace.join("panel.fbx"), ascii).unwrap();
+    let output = invoke(port, &[], r#"{"command":"import_fbx","path":"panel.fbx","response":"full"}"#);
+    let response = reply(&output);
+    assert!(output.status.success(), "{response}");
+    let mesh = &response["result"]["mesh"];
+    assert_eq!(mesh["objects"]["1"]["name"], "Panel");
+    assert_eq!(mesh["objects"]["1"]["origin"], serde_json::json!([2.0, 0.0, 0.0]));
+    assert_eq!(mesh["vertices"]["2"], serde_json::json!([1.0, 0.0, 0.0]));
+    assert_eq!(mesh["faces"]["1"], serde_json::json!([1, 3, 2]));
 }
 
 #[test]

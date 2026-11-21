@@ -28,6 +28,70 @@ let clipHighlight = -1;
 let viewerMode = 'mesh';
 const renderModes = { mesh: 'shaded', animation: 'vertex_color_shaded' };
 const rigDisplay = { bones: false, hierarchy: false, joints: false, mesh: true };
+function setupCameraGizmo() {
+    const directions = [
+        ['right', 'axis-x', [1, 0, 0], Math.PI / 2, 0],
+        ['left', 'axis-x', [-1, 0, 0], -Math.PI / 2, 0],
+        ['top', 'axis-y', [0, 1, 0], 0, Math.PI / 2],
+        ['bottom', 'axis-y', [0, -1, 0], 0, -Math.PI / 2],
+        ['front', 'axis-z', [0, 0, 1], 0, 0],
+        ['back', 'axis-z', [0, 0, -1], Math.PI, 0],
+    ];
+    const axes = directions.map(([name, color, direction, yaw, pitch]) => {
+        const button = element(`camera-${name}`);
+        const line = document.createElement('span');
+        button.addEventListener('click', () => {
+            viewer.setCameraAngles(yaw, pitch);
+            viewer.turntable = false;
+            element('turntable').setAttribute('aria-pressed', 'false');
+            updateAxes();
+        });
+        return { button, line, color, direction };
+    });
+    element('camera-axis-lines').replaceChildren(...axes.map(axis => axis.line));
+
+    let lastYaw = null;
+    let lastPitch = null;
+    function updateAxes() {
+        const { yaw, pitch } = viewer;
+        if (yaw === lastYaw && pitch === lastPitch) { return; }
+
+        lastYaw = yaw;
+        lastPitch = pitch;
+        const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
+        const up = [-Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), -Math.cos(yaw) * Math.sin(pitch)];
+        const facing = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
+        for (const { button, line, color, direction } of axes) {
+            const project = basis => basis.reduce((sum, value, index) => sum + value * direction[index], 0);
+            const depth = project(facing);
+            let x = 40 * project(right);
+            const y = -40 * project(up);
+            // Separate coincident endpoints when an axis points toward the camera.
+            x += Math.sign(depth) * Math.max(0, 14 - Math.hypot(x, y));
+            const rear = depth < -0.0001 ? ' rear' : '';
+            button.className = `camera-axis ${color}${rear}`;
+            line.className = `camera-axis-line ${color}${rear}`;
+            button.setAttribute('style', `transform: translate(calc(-50% + ${x}px), calc(-50% + ${y}px)); z-index: ${Math.round((depth + 1) * 10) + 1}`);
+            button.setAttribute('aria-pressed', String(depth >= 1 - 1e-8));
+            line.setAttribute('style', `width: ${Math.hypot(x, y)}px; transform: rotate(${Math.atan2(y, x)}rad)`);
+        }
+    }
+
+    element('orthographic').addEventListener('click', () => {
+        viewer.setOrthographic(!viewer.orthographic);
+        syncProjectionButton();
+    });
+    updateAxes();
+    return updateAxes;
+}
+
+function syncProjectionButton() {
+    const button = element('orthographic');
+    const { orthographic } = viewer;
+    button.textContent = orthographic ? 'Orthographic' : 'Perspective';
+    button.title = orthographic ? 'Switch to perspective projection' : 'Switch to orthographic projection';
+    button.setAttribute('aria-pressed', String(orthographic));
+}
 
 function viewerSnapshot() {
     return JSON.stringify({
@@ -68,6 +132,7 @@ function restoreWorkspaceView() {
     if (state === null || typeof state !== 'object') { return; }
 
     viewer.restoreCamera(state.camera);
+    syncProjectionButton();
     for (const name of ['grid', 'turntable']) {
         if (typeof state[name] !== 'boolean') { continue; }
 
@@ -510,7 +575,11 @@ function initialize() {
         savedStateTag = null;
     });
     inspector = new ObjectInspector(viewer);
-    viewer.onAnimationFrame = advanceAnimation;
+    const updateCameraGizmo = setupCameraGizmo();
+    viewer.onAnimationFrame = seconds => {
+        updateCameraGizmo();
+        advanceAnimation(seconds);
+    };
     const clipSearch = element('animation-clip-search');
     const clipPicker = element('animation-clip-picker');
     element('animation-clip-open').addEventListener('click', () => {

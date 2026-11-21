@@ -8,6 +8,8 @@ pub struct Texture {
     pub width: usize,
     pub height: usize,
     pub rgba_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha_cutoff: Option<f64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub maps: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,7 +63,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             .filter(|name| !name.trim().is_empty() && name.len() <= 128)
             .ok_or("name must contain 1..128 bytes")?;
         let texture: Texture = serde_json::from_value(request.clone())
-            .map_err(|_| "texture requires width, height and rgba_base64")?;
+            .map_err(|_| "texture requires width, height, rgba_base64 and an optional numeric alpha_cutoff")?;
         pixels(&texture)?;
         let total: usize = mesh
             .textures
@@ -382,6 +384,9 @@ pub(super) fn validate(mesh: &Mesh) -> Result<(), String> {
 }
 
 pub(super) fn pixels(texture: &Texture) -> Result<Vec<u8>, String> {
+    if texture.alpha_cutoff.is_some_and(|cutoff| !(0.0..=1.0).contains(&cutoff)) {
+        return Err("alpha_cutoff must be between 0 and 1".into());
+    }
     if texture.width == 0 || texture.height == 0 || texture.width > 1024 || texture.height > 1024 {
         return Err(format!("texture is {}×{} pixels; each dimension must be 1..1024", texture.width, texture.height));
     }
@@ -430,22 +435,28 @@ pub(super) fn import_png(bytes: &[u8]) -> Result<Texture, String> {
         width,
         height,
         rgba_base64: base64::encode(&rgba),
+        alpha_cutoff: None,
         maps: BTreeMap::new(),
         paint: None,
     })
 }
 
-pub(super) fn sample(texture: &Texture, bytes: &[u8], uv: [f64; 2]) -> [u8; 3] {
-    let x =
-        ((uv[0].rem_euclid(1.0) * texture.width as f64).floor() as usize).min(texture.width - 1);
-    let row =
-        ((uv[1].rem_euclid(1.0) * texture.height as f64).floor() as usize).min(texture.height - 1);
-    let y = texture.height - 1 - row;
-    let index = (y * texture.width + x) * 4;
-    let alpha = f64::from(bytes[index + 3]) / 255.0;
+pub(super) fn sample(texture: &Texture, bytes: &[u8], uv: [f64; 2], composite_alpha: bool) -> [u8; 3] {
+    let index = texel_offset(texture.width, texture.height, uv);
+    let alpha = if composite_alpha { f64::from(bytes[index + 3]) / 255.0 } else { 1.0 };
     std::array::from_fn(|channel| {
         (f64::from(bytes[index + channel]) * alpha + 128.0 * (1.0 - alpha)).round() as u8
     })
+}
+
+pub(super) fn below_cutoff(cutoff: Option<f64>, alpha: u8) -> bool {
+    cutoff.is_some_and(|cutoff| f64::from(alpha) / 255.0 < cutoff)
+}
+
+pub(super) fn texel_offset(width: usize, height: usize, uv: [f64; 2]) -> usize {
+    let x = ((uv[0].rem_euclid(1.0) * width as f64).floor() as usize).min(width - 1);
+    let row = ((uv[1].rem_euclid(1.0) * height as f64).floor() as usize).min(height - 1);
+    ((height - 1 - row) * width + x) * 4
 }
 
 pub(super) fn checker(uv: [f64; 2]) -> [u8; 3] {
@@ -497,7 +508,7 @@ pub(super) fn capture(mesh: &Mesh, request: &Value, revision: u64) -> Result<Val
                 bounds[3] - (y as f64 + 0.5) / size as f64 * (bounds[3] - bounds[1]),
             ];
             let color = if let Some(texture) = texture {
-                sample(texture, data.as_ref().unwrap(), uv)
+                sample(texture, data.as_ref().unwrap(), uv, true)
             } else {
                 checker(uv)
             };
@@ -547,6 +558,13 @@ pub(super) fn export_texture(mesh: &Mesh, request: &Value) -> Result<Value, Stri
     let texture = mesh.textures.get(name).ok_or("unknown texture")?;
     let pixels =
         crate::painting::map_pixels(texture, request["channel"].as_str().unwrap_or("base_color"))?;
+    let png = encode_png(texture, &pixels)?;
+    Ok(
+        json!({"texture":name,"channel":request["channel"].as_str().unwrap_or("base_color"),"width":texture.width,"height":texture.height,"png_base64":base64::encode(&png)}),
+    )
+}
+
+pub(super) fn encode_png(texture: &Texture, pixels: &[u8]) -> Result<Vec<u8>, String> {
     let mut png = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut png, texture.width as u32, texture.height as u32);
@@ -554,12 +572,10 @@ pub(super) fn export_texture(mesh: &Mesh, request: &Value) -> Result<Value, Stri
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
         writer
-            .write_image_data(&pixels)
+            .write_image_data(pixels)
             .map_err(|error| error.to_string())?;
     }
-    Ok(
-        json!({"texture":name,"channel":request["channel"].as_str().unwrap_or("base_color"),"width":texture.width,"height":texture.height,"png_base64":base64::encode(&png)}),
-    )
+    Ok(png)
 }
 
 fn line(rgb: &mut [u8], size: usize, a: [f64; 2], b: [f64; 2]) {

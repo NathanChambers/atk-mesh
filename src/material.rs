@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 pub(super) struct Prepared {
     width: usize,
     height: usize,
+    alpha_cutoff: Option<f64>,
     maps: BTreeMap<String, Vec<u8>>,
 }
 
@@ -16,17 +17,20 @@ impl Prepared {
         Ok(Self {
             width: texture.width,
             height: texture.height,
+            alpha_cutoff: texture.alpha_cutoff,
             maps,
         })
     }
 
+    pub fn masked(&self, uv: [f64; 2]) -> bool {
+        let index = crate::uv::texel_offset(self.width, self.height, uv);
+        crate::uv::below_cutoff(self.alpha_cutoff, self.maps["base_color"][index + 3])
+    }
+
     pub fn sample(&self, name: &str, uv: [f64; 2]) -> [f64; 3] {
-        let x = ((uv[0].rem_euclid(1.0) * self.width as f64).floor() as usize).min(self.width - 1);
-        let row =
-            ((uv[1].rem_euclid(1.0) * self.height as f64).floor() as usize).min(self.height - 1);
-        let index = ((self.height - 1 - row) * self.width + x) * 4;
+        let index = crate::uv::texel_offset(self.width, self.height, uv);
         let pixels = &self.maps[name];
-        let alpha = if name == "base_color" {
+        let alpha = if name == "base_color" && self.alpha_cutoff.is_none() {
             f64::from(pixels[index + 3]) / 255.0
         } else {
             1.0

@@ -236,12 +236,17 @@ export function perspective(fieldOfView, aspect, near, far) {
     return new Float32Array([focal / aspect, 0, 0, 0, 0, focal, 0, 0, 0, 0, (far + near) * range, -1, 0, 0, 2 * far * near * range, 0]);
 }
 
-export function cameraMatrix(eye, target) {
+export function orthographic(halfHeight, aspect, near, far) {
+    const range = 1 / (near - far);
+    return new Float32Array([1 / (halfHeight * aspect), 0, 0, 0, 0, 1 / halfHeight, 0, 0, 0, 0, 2 * range, 0, 0, 0, (far + near) * range, 1]);
+}
+
+export function cameraMatrix(eye, target, yaw = 0) {
     const backward = eye.map((value, axis) => value - target[axis]);
     const length = Math.hypot(...backward);
     const z = backward.map(value => value / length);
     const rightLength = Math.hypot(z[2], z[0]);
-    const x = [z[2] / rightLength, 0, -z[0] / rightLength];
+    const x = rightLength > 1e-10 ? [z[2] / rightLength, 0, -z[0] / rightLength] : [Math.cos(yaw), 0, -Math.sin(yaw)];
     const y = [z[1] * x[2], z[2] * x[0] - z[0] * x[2], -z[1] * x[0]];
     const offset = direction => -direction.reduce((sum, value, axis) => sum + value * eye[axis], 0);
     return new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, offset(x), offset(y), offset(z), 1]);

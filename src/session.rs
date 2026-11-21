@@ -930,6 +930,9 @@ impl Session {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         let texture = crate::uv::import_png(&bytes)?;
         let mut edit = serde_json::to_value(texture).map_err(|error| error.to_string())?;
+        if let Some(cutoff) = request.get("alpha_cutoff") {
+            edit["alpha_cutoff"] = cutoff.clone();
+        }
         edit["command"] = json!("texture_define");
         edit["name"] = request["name"].clone();
         if let Some(revision) = request.get("revision") {
@@ -941,12 +944,12 @@ impl Session {
         self.document.execute(edit)
     }
 
-    fn import_glb(&mut self, request: &Value) -> Result<Value, String> {
+    fn import_mesh(&mut self, request: &Value, format: &str) -> Result<Value, String> {
         let path = request["path"].as_str().ok_or("path is required")?;
         let directory = fs::canonicalize(self.workflow_directory()).map_err(|e| e.to_string())?;
         let path = fs::canonicalize(directory.join(path)).map_err(|e| e.to_string())?;
         if !path.starts_with(&directory) {
-            return Err("GLB must remain inside workspace".into());
+            return Err(format!("{format} must remain inside workspace"));
         }
         let mut edit = request.clone();
         edit["path"] = json!(path);
@@ -966,7 +969,9 @@ impl Session {
         } else if request["command"] == "texture_import" {
             self.import_texture(&request)
         } else if request["command"] == "import_glb" {
-            self.import_glb(&request)
+            self.import_mesh(&request, "GLB")
+        } else if request["command"] == "import_fbx" {
+            self.import_mesh(&request, "FBX")
         } else if request["command"] == "query_record" {
             self.query_record(&request)
         } else if request["command"] == "object_review_check"

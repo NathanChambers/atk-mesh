@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "mesh-server [--project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; default 7878)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nUse a distinct port for the project viewer and each editor. Stop with Ctrl+C."
+            "mesh-server [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; default 7878)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nUse a distinct port for the project viewer and each editor. Stop with Ctrl+C."
         );
         println!(
             "\nList meshes: mesh-cli --port 7878 --list-workspaces\nStart an editor: mesh-server --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
@@ -43,8 +43,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 headless = true;
                 continue;
             }
+            _ if !argument.starts_with('-') => {
+                if project.replace(argument.clone()).is_some() {
+                    return Err("Specify the viewer root once, as a path or with --project".into());
+                }
+                continue;
+            }
             _ => return Err(format!("unknown argument: {argument}; use --help").into()),
         };
+        if argument == "--project" && target.is_some() {
+            return Err("Specify the viewer root once, as a path or with --project".into());
+        }
         let value = arguments
             .next()
             .ok_or_else(|| format!("{argument} requires a value"))?;
@@ -54,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if workspace.is_some() && project.is_some() {
-        return Err("--project and --workspace are mutually exclusive".into());
+        return Err("A viewer root and --workspace are mutually exclusive".into());
     }
     let port = port.unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "7878".into()));
     let port: u16 = port

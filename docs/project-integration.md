@@ -2,6 +2,27 @@
 
 Install the tools using the [README](../README.md#install). Keep the tool source checkout separate from your consuming project. The consuming project needs the installed binaries and a model workspace directory.
 
+## Project structure and responsibilities
+
+| Component | Location | Responsibility |
+| --- | --- | --- |
+| Rust model library | [`src/lib.rs`](../src/lib.rs) and feature modules under `src/` | Owns mesh geometry, UVs, textures, rigs, clips, and model history. Validates edits and computes queries, sampled poses, captures, and exports. |
+| Editor session | [`src/session.rs`](../src/session.rs) and [`src/workflow.rs`](../src/workflow.rs) | Runs commands against one model, owns workflow checks, saves native projects, and records command replies, snapshots, and artifacts. |
+| Server | [`src/server.rs`](../src/server.rs) and [`src/workspace_host.rs`](../src/workspace_host.rs) | Runs in editor mode for one locked workspace or in project viewer mode for a project root. Editor mode accepts JSON commands. Project viewer mode serves the web assets, saved model state, and replay history. |
+| CLI | [`src/cli.rs`](../src/cli.rs) | Reads JSON from arguments, files, or stdin, sends it to the selected server, and returns structured replies and exit status. Copies requested artifacts to local output paths. |
+| Browser viewer | [`web/`](../web/) | Reads saved state and replay records. Owns the viewport camera, projection, display modes, visibility filters, and playback controls. Stores view preferences in the browser and renders the model with WebGL. |
+| Tests | [`tests/`](../tests/) | Rust tests cover commands, persistence, captures, and exports. `viewer.mjs` covers browser rendering data, interaction, and replay. |
+
+An agent sends a JSON command through `mesh-cli` to an editor port. The editor validates the command, updates its model, and saves the resulting revision. The project viewer reads that saved revision on its own port. During replay it displays recorded snapshots, then returns to the latest saved state when the user exits replay.
+
+### Where new features belong
+
+- Implement anything that changes the saved model or affects exports and scripted results in the Rust model library. Expose it through the editor's JSON command API so agents and scripts can use the same operation.
+- Keep CLI-specific work in the client. Flags, stdin, exit status, and local output paths belong here.
+- Keep inspection and navigation in the viewer. The axis gizmo and projection toggle control the browser camera. CLI captures take explicit camera parameters, so the same request can be reproduced independently of the browser.
+- Keep preview computation in the browser when it supports interactive playback or rendering. Rust and JavaScript each sample animation and render geometry for their respective outputs. When a behavior is shared, such as clip interpolation, UV orientation, or alpha cutout, define its semantics in the model or command contract and test both paths on representative inputs.
+- If a future browser control edits a mesh, have it call the editor command API. The editor remains responsible for validation, undo, persistence, and recording.
+
 ## Start the project viewer and mesh editors
 
 From your project root:
@@ -105,7 +126,7 @@ response = json.loads(process.stdout)
 
 Keep `.mesh/model/project.json`, `workflow.json`, reference/evidence files and `sessions/` together. Geometry and workflow decisions persist across server restarts; in-memory undo/redo does not. Copy the whole model workspace to preserve replay and evidence. A standalone `save` output contains native mesh and appearance data, without workflow decisions or replay.
 
-Choose whether to version the workspace in your project or back it up separately. Recordings and captures can grow substantially; there is no automatic retention limit. Keep exported FBX/OBJ files in your normal asset pipeline. Import currently accepts static GLB geometry, with the source file inside the workspace; see the README for supported features and limitations. Units are project-defined: agree on a scale before modeling or importing.
+Choose whether to version the workspace in your project or back it up separately. Recordings and captures can grow substantially; there is no automatic retention limit. Keep exported FBX/OBJ files in your normal asset pipeline. Import accepts static GLB and FBX geometry from files inside the workspace. FBX import converts units to meters. For supported features and limits, see the [command reference](command-reference.md).
 
 ## Current limits
 
