@@ -28,7 +28,7 @@ From your project directory, open a new editor in one terminal. Use a fresh work
 mesh-server --workspace .mesh/quickstart --port 7879
 ```
 
-In a second terminal, create a box and save a preview image. This example uses PowerShell.
+In a second terminal, send commands to the editor on port 7879 to create a box and save a preview image. This example uses PowerShell.
 
 ```powershell
 '{"command":"object_create_box","name":"Box","min":[-0.5,0,-0.5],"max":[0.5,1,0.5]}' | mesh-cli --port 7879
@@ -38,10 +38,10 @@ In a second terminal, create a box and save a preview image. This example uses P
 Start the project viewer from the same project directory in another terminal.
 
 ```sh
-mesh-server --port 7878
+mesh-server . --port 7878
 ```
 
-To view a different directory, pass it as a path, for example `mesh-server "D:/Game Assets"`. You can also use `--project ROOT`.
+The positional path selects the root of the read-only viewer. To view another directory, run `mesh-server ~/projects/game-assets --port 7878`. You can also use `--project ROOT`. Omit the path to use the current directory.
 
 Open [the local viewer](http://127.0.0.1:7878), click the folder icon, and select `.mesh/quickstart`. The editor on port 7879 saves changes to the workspace. The viewer on port 7878 displays the saved model and its replay history.
 
