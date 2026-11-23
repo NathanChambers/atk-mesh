@@ -537,6 +537,22 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                 }
             }
             mesh.selection = object.vertices;
+            if command == "object_move" && value != [0.0; 3] {
+                let unchanged_instances = mesh.objects.values()
+                    .filter(|object| object.instance.as_ref().is_some_and(|link| link.master == id))
+                    .count();
+                if unchanged_instances > 0 {
+                    return Ok(json!({
+                        "object":id,
+                        "linked_instances_unchanged":unchanged_instances,
+                        "shared_shape_edit":{
+                            "instruction":"If the goal is to update every linked copy, restore the master to its intended placement first. Then select and move its vertices to change the shared shape.",
+                            "select":{"command":"select_object","object":id},
+                            "move":{"command":"move","object":id,"value":request["value"]}
+                        }
+                    }));
+                }
+            }
         }
         _ => return Err("unknown object command".into()),
     }

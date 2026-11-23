@@ -32,3 +32,5 @@
 - Register capture evidence using returned trace session/event. Refresh checks invalidated by relevant geometry changes before advancing/exporting.
 - Treat concepts and drawings as approximate observations: perspective and local proportions may be inconsistent. Use plausible camera bounds and trusted anchors, inspect independent regions, and preserve coherent geometry rather than forcing every residual to zero. Document ambiguous or inferred structure.
 - Keep `project.json`, `workflow.json`, resources and `sessions/` together in the model workspace. Recordings include workflow decisions and explicit exemptions.
+- At the end of the user's turn, use the latest `turn_handoff` receipt after mesh edits. Summarize changes and verified evidence. When its `invalidated_review` affects the requested work, run the supplied review command and inspect its evidence before finalizing.
+- When a CLI limitation, error, or gap in guidance blocks progress, forces a meaningful workaround, or repeatedly misdirects the work, submit one report per distinct issue with `feedback_submit`. See the `cli-feedback` help topic or run `mesh-cli --help`.

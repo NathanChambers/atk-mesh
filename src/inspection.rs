@@ -90,8 +90,15 @@ pub(super) fn region(mesh: &Mesh, request: &Value, revision: u64) -> Result<Valu
         .keys()
         .map(|edge| json!({"edge":[edge.0,edge.1],"faces":edge_incidence[edge]}))
         .collect();
+    let mut region_adjacency: BTreeMap<u64, BTreeSet<u64>> = core_vertices
+        .iter().map(|id| (*id, BTreeSet::new())).collect();
+    for &(a, b) in region_edges.keys() {
+        region_adjacency.get_mut(&a).unwrap().insert(b);
+        region_adjacency.get_mut(&b).unwrap().insert(a);
+    }
+    let components = crate::diagnostics::connected_components(&region_adjacency);
     Ok(
-        json!({"revision":revision,"faces":selected_faces,"vertices":positions,"neighbor_faces":neighbor_faces,"context_vertices":context,"adjacency":adjacency,"bounds":{"min":minimum,"max":maximum},"boundary_edges":boundary,"edge_incidence":incidence}),
+        json!({"revision":revision,"faces":selected_faces,"vertices":positions,"neighbor_faces":neighbor_faces,"context_vertices":context,"adjacency":adjacency,"bounds":{"min":minimum,"max":maximum},"boundary_edges":boundary,"edge_incidence":incidence,"topology":{"disconnected_components":components.len()}}),
     )
 }
 

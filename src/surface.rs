@@ -1,6 +1,7 @@
 use crate::{Mesh, normals, topology};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 type Point = [f64; 3];
 type Edges = BTreeMap<(u64, u64), Vec<u64>>;
@@ -105,6 +106,301 @@ fn contour(a: Point, b: Point, directions: &[Point]) -> bool {
     directions
         .iter()
         .any(|direction| dot(a, *direction) * dot(b, *direction) < 0.0)
+}
+
+pub(super) fn move_vertices(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
+    let id = request["object"].as_u64().ok_or("object must be an ID")?;
+    let object = mesh.objects.get(&id).ok_or("unknown object")?;
+    let offsets = request["offsets"]
+        .as_array()
+        .filter(|offsets| (1..=16_384).contains(&offsets.len()))
+        .ok_or("offsets must contain 1..16384 vertex offsets")?;
+
+    let mut positions = BTreeMap::new();
+    let mut maximum = 0.0_f64;
+    let mut moved = 0;
+    for entry in offsets {
+        let vertex = entry["vertex"]
+            .as_u64()
+            .ok_or("offset vertex must be an ID")?;
+        if !object.vertices.contains(&vertex) {
+            return Err(format!("vertex {vertex} does not belong to object {id}"));
+        }
+        if positions.contains_key(&vertex) {
+            return Err(format!("duplicate offset for vertex {vertex}"));
+        }
+
+        let delta = crate::vector(&entry["delta"])?;
+        let before = mesh.vertices[&vertex];
+        let after = crate::geometry::add(before, delta);
+        if after.iter().any(|position| !position.is_finite()) {
+            return Err(format!(
+                "offset for vertex {vertex} produces a non-finite position"
+            ));
+        }
+        let distance = length(subtract(after, before));
+        if !distance.is_finite() {
+            return Err(format!(
+                "offset for vertex {vertex} produces a non-finite displacement"
+            ));
+        }
+        positions.insert(vertex, after);
+        maximum = maximum.max(distance);
+        if before != after {
+            moved += 1;
+        }
+    }
+
+    mesh.vertices.extend(positions);
+    Ok(json!({"object":id,"moved_vertices":moved,"max_displacement":maximum}))
+}
+
+pub(super) fn sculpt_stroke(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
+    let id = request["object"].as_u64().ok_or("object must be an ID")?;
+    let (vertices, faces) = targets(mesh, request)?;
+    let sign = match request["mode"].as_str() {
+        Some("raise") => 1.0,
+        Some("lower") => -1.0,
+        _ => return Err("sculpt mode must be raise or lower".into()),
+    };
+    let radius = positive(request, "radius")?;
+    let strength = positive(request, "strength")?;
+    let direction = request
+        .get("direction")
+        .map(|value| {
+            let direction = crate::vector(value)?;
+            let scale = direction.iter().map(|axis| axis.abs()).fold(0.0, f64::max);
+            if scale == 0.0 {
+                return Err("direction must be a nonzero world-space vector".to_owned());
+            }
+            Ok(normals::unit(direction.map(|axis| axis / scale)))
+        })
+        .transpose()?;
+    let limit = if request.get("max_displacement").is_some() {
+        positive(request, "max_displacement")?
+    } else {
+        strength
+    };
+    let samples = request["samples"]
+        .as_array()
+        .filter(|samples| (1..=128).contains(&samples.len()))
+        .ok_or("samples must contain 1..128 face anchors")?;
+    let path_direction = match request.get("continuous") {
+        None | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) if samples.len() < 2 => {
+            return Err("continuous strokes require at least two ordered samples".into());
+        }
+        Some(Value::Bool(true)) => {
+            Some(direction.ok_or("continuous strokes require a fixed direction")?)
+        }
+        _ => return Err("continuous must be a boolean".into()),
+    };
+    let reach = if path_direction.is_some() {
+        radius * 2.0
+    } else {
+        radius
+    };
+
+    let mut pending = BinaryHeap::new();
+    let mut path = Vec::new();
+    for sample in samples {
+        let face = sample["face"].as_u64().ok_or("sample face must be an ID")?;
+        let face = mesh.faces.get(&face).ok_or("unknown sample face")?;
+        if !vertices.contains(&face[0]) {
+            return Err("sample face does not belong to the sculpt object".into());
+        }
+        let weights = crate::vector(&sample["barycentric"])?;
+        let sum: f64 = weights.iter().sum();
+        if (sum - 1.0).abs() > 1e-6 || weights.iter().any(|weight| !(0.0..=1.0).contains(weight)) {
+            return Err("barycentric weights must be in [0,1] and sum to 1".into());
+        }
+        let center: Point = std::array::from_fn(|axis| {
+            face.iter()
+                .zip(weights)
+                .map(|(vertex, weight)| mesh.vertices[vertex][axis] * (weight / sum))
+                .sum()
+        });
+        if let Some(axis) = path_direction {
+            let pressure = number(sample, "pressure", 1.0, 0.0, 1.0)?;
+            path.push((project_onto_plane(center, axis), pressure));
+        } else if sample.get("pressure").is_some() {
+            return Err("sample pressure requires a continuous stroke".into());
+        }
+        for vertex in face {
+            let distance = length(subtract(mesh.vertices[vertex], center));
+            if distance < reach {
+                // Nonnegative finite f64 values sort in bit order.
+                pending.push(Reverse((distance.to_bits(), *vertex)));
+            }
+        }
+    }
+    if path
+        .windows(2)
+        .any(|pair| length(subtract(pair[1].0, pair[0].0)) > radius)
+    {
+        return Err(
+            "continuous stroke samples must be at most one radius apart in the brush plane".into(),
+        );
+    }
+
+    let mut adjacency = BTreeMap::<u64, Vec<(u64, f64)>>::new();
+    let mut fixed = BTreeSet::new();
+    for ((a, b), incident) in edges(mesh, &faces) {
+        let distance = length(subtract(mesh.vertices[&a], mesh.vertices[&b]));
+        adjacency.entry(a).or_default().push((b, distance));
+        adjacency.entry(b).or_default().push((a, distance));
+        if incident.len() != 2 {
+            fixed.extend([a, b]);
+        }
+    }
+
+    let mut distances = BTreeMap::new();
+    while let Some(Reverse((distance, vertex))) = pending.pop() {
+        if distances.contains_key(&vertex) {
+            continue;
+        }
+        let distance = f64::from_bits(distance);
+        distances.insert(vertex, distance);
+        for (neighbor, edge_length) in &adjacency[&vertex] {
+            let next = distance + edge_length;
+            if next < reach && !distances.contains_key(neighbor) {
+                pending.push(Reverse((next.to_bits(), *neighbor)));
+            }
+        }
+    }
+
+    let mut area_normals = BTreeMap::<u64, Point>::new();
+    for face in faces.iter().map(|id| &mesh.faces[id]) {
+        let area = triangle_area(face, &mesh.vertices);
+        for vertex in face
+            .iter()
+            .filter(|id| distances.contains_key(id) && !fixed.contains(id))
+        {
+            let sum = area_normals.entry(*vertex).or_default();
+            *sum = crate::geometry::add(*sum, area);
+        }
+    }
+
+    let mut weights = BTreeMap::new();
+    for &vertex in area_normals.keys() {
+        let distance = distances[&vertex];
+        let weight = if let Some(axis) = path_direction {
+            let point = project_onto_plane(mesh.vertices[&vertex], axis);
+            let (lateral, pressure) = path
+                .windows(2)
+                .map(|pair| {
+                    let (distance, fraction) = segment_position(point, pair[0].0, pair[1].0);
+                    let pressure = (1.0 - fraction) * pair[0].1 + fraction * pair[1].1;
+                    (distance, pressure)
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .expect("continuous strokes have at least two anchors");
+            pressure
+                * brush_falloff(1.0 - lateral / radius)
+                * brush_falloff(4.0 - 2.0 * distance / radius)
+        } else {
+            brush_falloff(1.0 - distance / radius)
+        };
+        weights.insert(vertex, weight);
+    }
+    // Smooth the influence field to soften steps from edge routing and discrete anchors.
+    let blend_passes = if path_direction.is_some() { 0 } else { 2 };
+    for _ in 0..blend_passes {
+        weights = weights
+            .iter()
+            .map(|(&vertex, &weight)| {
+                let mut total = 0.0;
+                let mut sum = 0.0;
+                for &(neighbor, edge_length) in &adjacency[&vertex] {
+                    let influence = 1.0 / (edge_length / radius).max(1e-6);
+                    total += influence;
+                    sum += influence * weights.get(&neighbor).copied().unwrap_or(0.0);
+                }
+                (vertex, 0.5 * (weight + sum / total))
+            })
+            .collect();
+    }
+
+    let mut positions = BTreeMap::new();
+    let mut maximum = 0.0_f64;
+    for (vertex, area) in area_normals {
+        let before = mesh.vertices[&vertex];
+        let amount = strength.min(limit) * weights[&vertex];
+        let axis = direction.unwrap_or_else(|| normals::unit(area));
+        let offset = axis.map(|component| component * sign * amount);
+        let after = crate::geometry::add(before, offset);
+        if after != before {
+            maximum = maximum.max(length(subtract(after, before)));
+            positions.insert(vertex, after);
+        }
+    }
+    if positions.is_empty() {
+        return Err(
+            "stroke reached no movable vertices; use a larger radius or a denser patch".into(),
+        );
+    }
+
+    for face in faces.iter().map(|id| &mesh.faces[id]) {
+        if !face.iter().any(|id| positions.contains_key(id)) {
+            continue;
+        }
+        let before = triangle_area(face, &mesh.vertices);
+        let [a, b, c] = [face[0], face[1], face[2]]
+            .map(|id| positions.get(&id).copied().unwrap_or(mesh.vertices[&id]));
+        let after = cross(subtract(b, a), subtract(c, a));
+        let area = length(after);
+        if !area.is_finite()
+            || area < length(before) * 0.2
+            || dot(normals::unit(before), normals::unit(after)) <= 0.0
+        {
+            return Err(
+                "stroke would collapse or flip a triangle; reduce strength or displacement".into(),
+            );
+        }
+    }
+
+    let moved = positions.len();
+    mesh.vertices.extend(positions);
+    Ok(
+        json!({"object":id,"moved_vertices":moved,"max_displacement":maximum,"displacement_limit":limit}),
+    )
+}
+
+fn project_onto_plane(point: Point, normal: Point) -> Point {
+    let height = dot(point, normal);
+    std::array::from_fn(|axis| point[axis] - height * normal[axis])
+}
+
+fn segment_position(point: Point, start: Point, end: Point) -> (f64, f64) {
+    let delta = subtract(end, start);
+    let size = length(delta);
+    let from_start = subtract(point, start);
+    if size == 0.0 {
+        return (length(from_start), 0.5);
+    }
+    let unit = delta.map(|axis| axis / size);
+    let along = dot(from_start, unit).clamp(0.0, size);
+    let lateral = length(std::array::from_fn(|axis| {
+        from_start[axis] - along * unit[axis]
+    }));
+    (lateral, along / size)
+}
+
+fn brush_falloff(radial: f64) -> f64 {
+    let radial = radial.clamp(0.0, 1.0);
+    radial * radial * (3.0 - 2.0 * radial)
+}
+
+fn positive(request: &Value, field: &str) -> Result<f64, String> {
+    request[field]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format!("{field} must be a positive finite number"))
+}
+
+fn triangle_area(face: &[u64], vertices: &BTreeMap<u64, Point>) -> Point {
+    let [a, b, c] = [face[0], face[1], face[2]].map(|vertex| vertices[&vertex]);
+    cross(subtract(b, a), subtract(c, a))
 }
 
 pub(super) fn relax(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {

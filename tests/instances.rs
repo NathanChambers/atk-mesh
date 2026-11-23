@@ -135,9 +135,10 @@ fn independent_placement_and_pivots_survive_master_transforms() {
     document
         .execute(json!({"command":"object_rotate","object":2,"value":[20,65,-15]}))
         .unwrap();
-    document
+    let moved_instance = document
         .execute(json!({"command":"object_move","object":2,"value":[0,2,3]}))
         .unwrap();
+    assert!(moved_instance["operation"].get("shared_shape_edit").is_none());
     let before = state(&mut document);
     let ids = before["mesh"]["objects"]["2"]["vertices"]
         .as_array()
@@ -147,7 +148,17 @@ fn independent_placement_and_pivots_survive_master_transforms() {
         json!({"command":"object_rotate","object":1,"value":[12,40,-20]}),
         json!({"command":"object_set_origin","object":1,"origin":[2,1,3]}),
     ] {
+        let moved_master = request["command"] == "object_move";
         let result = document.execute(request).unwrap();
+        let operation = &result["operation"];
+        if moved_master {
+            assert_eq!(operation["object"], 1);
+            assert_eq!(operation["linked_instances_unchanged"], 1);
+            assert_eq!(operation["shared_shape_edit"]["select"], json!({"command":"select_object","object":1}));
+            assert_eq!(operation["shared_shape_edit"]["move"], json!({"command":"move","object":1,"value":[3,4,5]}));
+        } else {
+            assert!(operation.get("shared_shape_edit").is_none());
+        }
         for id in ids {
             let id = id.as_u64().unwrap();
             assert_close(point(&result["mesh"], id), point(&before["mesh"], id));
@@ -165,6 +176,21 @@ fn independent_placement_and_pivots_survive_master_transforms() {
         .execute(json!({"command":"scale","object":1,"value":[1,2,1]}))
         .unwrap();
     assert_link(&changed["mesh"]);
+
+    let placement = document
+        .execute(json!({"command":"object_move","object":1,"value":[0,0,-0.1]}))
+        .unwrap();
+    let recipe = &placement["operation"]["shared_shape_edit"];
+    document.execute(json!({"command":"undo"})).unwrap();
+    document.execute(recipe["select"].clone()).unwrap();
+    let shared_edit = document.execute(recipe["move"].clone()).unwrap();
+    assert_link(&shared_edit["mesh"]);
+    assert_eq!(shared_edit["mesh"]["objects"]["1"]["origin"], changed["mesh"]["objects"]["1"]["origin"]);
+    assert_eq!(shared_edit["mesh"]["objects"]["2"]["origin"], changed["mesh"]["objects"]["2"]["origin"]);
+    for id in ids {
+        let id = id.as_u64().unwrap();
+        assert_ne!(point(&shared_edit["mesh"], id), point(&changed["mesh"], id));
+    }
 }
 
 #[test]

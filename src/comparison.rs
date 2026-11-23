@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::io::Cursor;
 
-fn decode(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     decoder.set_limits(png::Limits {

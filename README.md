@@ -20,6 +20,33 @@ mesh-cli --help
 
 Cargo installs both binaries into its bin directory, usually `~/.cargo/bin`. The browser viewer is bundled with `mesh-server`.
 
+### Install the Codex skill
+
+Install the [Mesh Workbench skill](.agents/skills/mesh-workbench/SKILL.md) to use `$mesh-workbench` from your own projects. It guides Codex through workspace selection, modeling, review, and local CLI feedback.
+
+From the same source checkout, copy the skill into your user skills directory. Run the same command again after updating the checkout to refresh the installed copy.
+
+**Windows PowerShell**
+
+```powershell
+$codexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
+$skillDir = Join-Path $codexRoot 'skills/mesh-workbench'
+New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+Copy-Item -LiteralPath '.agents/skills/mesh-workbench/SKILL.md' -Destination $skillDir -Force
+```
+
+**macOS and Linux**
+
+```sh
+skill_dir="${CODEX_HOME:-$HOME/.codex}/skills/mesh-workbench"
+mkdir -p "$skill_dir"
+cp .agents/skills/mesh-workbench/SKILL.md "$skill_dir/SKILL.md"
+```
+
+Open a new Codex session in your project and start a request with `$mesh-workbench`.
+
+For a standalone feedback command in Codex, repeat the installation with `mesh-feedback-invocation` in both paths and invoke [`$mesh-feedback-invocation`](.agents/skills/mesh-feedback-invocation/SKILL.md). To review reports and update the tool, use [`$mesh-feedback-update`](.agents/skills/mesh-feedback-update/SKILL.md) from the Mesh Workbench checkout.
+
 ## Quickstart
 
 From your project directory, open a new editor in one terminal. Use a fresh workspace name if `.mesh/quickstart` already exists.
@@ -50,6 +77,8 @@ Open [the local viewer](http://127.0.0.1:7878), click the folder icon, and selec
 To import a static FBX, place it inside the editor's workspace and send `{"command":"import_fbx","path":"cargo.fbx"}` to the editor. Use `import_glb` for static GLB geometry. [Import details](docs/command-reference.md)
 
 ## Built-in help
+
+For local image-based blockouts, see [reconstruction commands](docs/reconstruction.md).
 
 With the editor running, use the CLI to find help by task or open a specific topic. Add `"all":true` to the help request for the complete topic list.
 

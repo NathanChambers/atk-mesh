@@ -17,6 +17,14 @@ fn help_exposes_embedded_guidance_with_exact_pages_and_no_model_changes() {
     assert_eq!(topics["reference-alignment"], "Reference alignment");
     let tasks = index["result"]["tasks"].as_object().unwrap();
     assert_eq!(tasks["export_assets"], json!(["export"]));
+    assert_eq!(tasks["sculpt_geometry"][0], "local-sculpting");
+    let sculpt = session.execute(json!({"command":"help","topic":"local-sculpting"}));
+    let sculpt_alias = session.execute(json!({"command":"help","topic":"sculpt"}));
+    assert_eq!(sculpt_alias["result"], sculpt["result"]);
+    let sculpt_text = sculpt["result"]["text"].as_str().unwrap();
+    for term in ["move_vertices", "sculpt_stroke", "disconnected_components"] {
+        assert!(sculpt_text.contains(term));
+    }
     for task in tasks.values() {
         for topic in task.as_array().unwrap() {
             assert!(topics.contains_key(topic.as_str().unwrap()), "{topic}");

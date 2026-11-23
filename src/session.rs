@@ -1011,19 +1011,33 @@ impl Session {
         };
         let duration = started.elapsed().as_secs_f64() * 1000.0;
         let state_changed = before_revision.as_u64() != Some(self.document.revision());
+        let mut mesh_edited = false;
+        let mut invalidated_review = None;
+        let mut affected_clearance = None;
         let changed = if state_changed {
             let state = self
                 .document
                 .execute(json!({"command":"inspect"}))
                 .expect("inspect is read-only");
             let changed = self.state["mesh"] != state["mesh"];
+            if changed {
+                let previous = self.state["mesh"].as_object().expect("inspect returns a mesh");
+                let current = state["mesh"].as_object().expect("inspect returns a mesh");
+                let previous_fields = previous.iter().filter(|(key, _)| *key != "selection");
+                let current_fields = current.iter().filter(|(key, _)| *key != "selection");
+                mesh_edited = previous_fields.ne(current_fields);
+                if mesh_edited {
+                    invalidated_review = self.workflow.invalidated_saved_review(&self.state["mesh"], &state["mesh"], self.workflow_directory());
+                    affected_clearance = self.workflow.affected_clearance(&self.state["mesh"], &state["mesh"]);
+                }
+            }
             self.state = state;
             changed
         } else {
             false
         };
         let id = self.events.len() + 1;
-        let full = match result {
+        let mut full = match result {
             Ok(value) if value["status"] == "requirements_missing" => {
                 json!({"ok":false,"error":"requirements_missing","result":value})
             }
@@ -1035,6 +1049,21 @@ impl Session {
             }
             Err(error) => json!({"ok":false,"error":error}),
         };
+        if mesh_edited && full["ok"] == true {
+            full["turn_handoff"] = json!({
+                "revision": self.state["revision"],
+                "workflow_status_command": {"command":"workflow_status"},
+                "prompt": "Use the latest receipt at turn end. Summarize changes, verified evidence and remaining uncertainty."
+            });
+            if let Some(mut review) = invalidated_review {
+                review["command"]["revision"] = self.state["revision"].clone();
+                full["turn_handoff"]["invalidated_review"] = review;
+            }
+            if let Some(mut clearance) = affected_clearance {
+                clearance["command"]["revision"] = self.state["revision"].clone();
+                full["turn_handoff"]["affected_clearance"] = clearance;
+            }
+        }
         let mut output = full.clone();
         if request["response"] != "full" && output["ok"] == true {
             let command = request["command"].as_str().unwrap_or("");
@@ -1086,6 +1115,7 @@ impl Session {
             self.write("index.json", &self.index())
         })();
         if let Err(error) = persistence {
+            output.as_object_mut().expect("reply is an object").remove("turn_handoff");
             output["recording_error"] = json!(error.to_string());
             output["persistence"] = json!({
                 "revision": self.state["revision"],

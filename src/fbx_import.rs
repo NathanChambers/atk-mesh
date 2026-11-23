@@ -1,9 +1,10 @@
-use crate::{Mesh, objects};
+use crate::{Mesh, face_is_degenerate, objects};
+use std::collections::BTreeSet;
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
 
-const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ELEMENTS: usize = 1_000_000;
 const MAX_LOADER_BYTES: usize = 256 * 1024 * 1024;
 
@@ -19,7 +20,7 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_SOURCE_BYTES {
-        return Err("FBX exceeds 64 MiB import limit".into());
+        return Err("FBX exceeds 512 MiB import limit".into());
     }
 
     let scene = ufbx::load_memory(
@@ -51,6 +52,7 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
     let mut vertex_count = 0;
     let mut face_count = 0;
     let mut corner_count = 0;
+    let mut skipped_faces = 0;
     for node in &scene.nodes {
         let Some(source) = &node.mesh else { continue };
         let face_total = source.num_faces
@@ -114,20 +116,26 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
             if determinant < 0.0 {
                 face[1..].reverse();
             }
+            let unique: BTreeSet<_> = face.iter().collect();
+            if unique.len() != face.len() || face_is_degenerate(mesh, &face) {
+                skipped_faces += 1;
+                continue;
+            }
             mesh.add_face(face)?;
         }
 
         mesh.objects.get_mut(&id).unwrap().vertices.extend(vertices);
         imported.push(id);
     }
-    if imported.is_empty() {
+    if face_count == skipped_faces {
         return Err("FBX scene contains no polygon meshes".into());
     }
 
     Ok(json!({
         "objects": imported,
         "vertices": vertex_count,
-        "faces": face_count,
+        "faces": face_count - skipped_faces,
+        "skipped_invalid_faces": skipped_faces,
         "warnings": [
             "Geometry only: UVs, materials, textures, colors, source normals, rigs and animations are not retained.",
             "Mesh transforms are baked into vertices in right-handed Y-up coordinates and meters."

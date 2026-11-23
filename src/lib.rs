@@ -33,6 +33,7 @@ mod regions;
 mod render;
 mod rig;
 pub mod responses;
+pub mod reconstruction;
 pub mod session;
 mod shaping;
 mod stl;
@@ -528,6 +529,8 @@ impl Document {
                 return surface_ops::edit(&mut self.mesh, command, request).map(Some);
             }
             "bevel_edges" => return connected::bevel(&mut self.mesh, request).map(Some),
+            "move_vertices" => return surface::move_vertices(&mut self.mesh, request).map(Some),
+            "sculpt_stroke" => return surface::sculpt_stroke(&mut self.mesh, request).map(Some),
             "relax_surface" => return surface::relax(&mut self.mesh, request).map(Some),
             "improve_triangulation" => return surface::improve(&mut self.mesh, request).map(Some),
             "weld_coincident" => {
@@ -952,6 +955,33 @@ fn cube() -> Mesh {
     mesh
 }
 
+fn face_is_degenerate(mesh: &Mesh, face: &[u64]) -> bool {
+    let origin = mesh.vertices[&face[0]];
+    let mut area = [0.0; 3];
+    let mut scale_squared = 0.0_f64;
+    for vertex in face {
+        let point = mesh.vertices[vertex];
+        let distance_squared: f64 = (0..3)
+            .map(|axis| (point[axis] - origin[axis]).powi(2))
+            .sum();
+        scale_squared = scale_squared.max(distance_squared);
+    }
+    for i in 1..face.len() - 1 {
+        let a = mesh.vertices[&face[i]];
+        let b = mesh.vertices[&face[i + 1]];
+        for (axis, component) in area.iter_mut().enumerate() {
+            let j = (axis + 1) % 3;
+            let k = (axis + 2) % 3;
+            *component += (a[j] - origin[j]) * (b[k] - origin[k])
+                - (a[k] - origin[k]) * (b[j] - origin[j]);
+        }
+    }
+    let area_squared = area.iter().map(|v| v * v).sum::<f64>();
+    !area_squared.is_finite()
+        || scale_squared == 0.0
+        || area_squared <= scale_squared.powi(2) * 1e-24
+}
+
 fn validate(mesh: &Mesh) -> Result<(), String> {
     rig::validate(mesh)?;
     vertex_colors::validate(mesh)?;
@@ -984,31 +1014,7 @@ fn validate(mesh: &Mesh) -> Result<(), String> {
         {
             return Err("invalid face references".into());
         }
-        let origin = mesh.vertices[&face[0]];
-        let mut area = [0.0; 3];
-        let mut scale_squared = 0.0_f64;
-        for vertex in face {
-            let point = mesh.vertices[vertex];
-            let distance_squared: f64 = (0..3)
-                .map(|axis| (point[axis] - origin[axis]).powi(2))
-                .sum();
-            scale_squared = scale_squared.max(distance_squared);
-        }
-        for i in 1..face.len() - 1 {
-            let a = mesh.vertices[&face[i]];
-            let b = mesh.vertices[&face[i + 1]];
-            for (axis, component) in area.iter_mut().enumerate() {
-                let j = (axis + 1) % 3;
-                let k = (axis + 2) % 3;
-                *component += (a[j] - origin[j]) * (b[k] - origin[k])
-                    - (a[k] - origin[k]) * (b[j] - origin[j]);
-            }
-        }
-        let area_squared = area.iter().map(|v| v * v).sum::<f64>();
-        if !area_squared.is_finite()
-            || scale_squared == 0.0
-            || area_squared <= scale_squared.powi(2) * 1e-24
-        {
+        if face_is_degenerate(mesh, face) {
             return Err("edit would create a degenerate face".into());
         }
     }

@@ -160,6 +160,26 @@ impl Camera {
         self.height as f64 / (2.0 * (self.fov.unwrap_or(60.0).to_radians() * 0.5).tan())
     }
 
+    pub(crate) fn principal_point(&self) -> [f64; 2] {
+        [
+            self.width as f64 * (0.5 + self.lens_shift[0]),
+            self.height as f64 * (0.5 + self.lens_shift[1]),
+        ]
+    }
+
+    pub(crate) fn ray(&self, pixel: [f64; 2]) -> ([f64; 3], [f64; 3]) {
+        let [x, y] = self.principal_point();
+        let scale = if self.perspective() { self.focal_length() } else { self.pixels_per_unit };
+        let offset: [f64; 3] = std::array::from_fn(|axis| {
+            ((pixel[0] - x) * self.right[axis] - (pixel[1] - y) * self.up[axis]) / scale
+        });
+        if self.perspective() {
+            return (self.center, std::array::from_fn(|axis| offset[axis] - self.forward[axis]));
+        }
+        let origin = std::array::from_fn(|axis| self.center[axis] + offset[axis]);
+        (origin, self.forward.map(|value| -value))
+    }
+
     pub fn project(&self, point: [f64; 3]) -> Result<[f64; 3], String> {
         let local = std::array::from_fn(|axis| point[axis] - self.center[axis]);
         if !self.contains(point) {
@@ -170,9 +190,10 @@ impl Camera {
         } else {
             self.pixels_per_unit
         };
+        let [x, y] = self.principal_point();
         let projected = [
-            self.width as f64 * (0.5 + self.lens_shift[0]) + dot(local, self.right) * scale,
-            self.height as f64 * (0.5 + self.lens_shift[1]) - dot(local, self.up) * scale,
+            x + dot(local, self.right) * scale,
+            y - dot(local, self.up) * scale,
             dot(local, self.forward),
         ];
         if projected.iter().any(|value| !value.is_finite()) {

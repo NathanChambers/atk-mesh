@@ -148,6 +148,14 @@ fn text<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {
         })
 }
 
+fn clearance_object(selector: &Value) -> Option<u64> {
+    let fields = selector.as_object()?;
+    if fields.len() != 1 {
+        return None;
+    }
+    fields.get("object")?.as_u64()
+}
+
 fn scope(request: &Value, mesh: &Value) -> Result<Option<u64>, String> {
     if request.get("object").is_none() {
         return Ok(None);
@@ -569,6 +577,64 @@ impl Workflow {
                 .then(|| json!({"command":"review_run","name":name,"preset_version":version}));
             Some(json!({"evidence":id,"source":resource["source"],"current_preset_version":current,"command":command}))
         }).collect()
+    }
+
+    pub(crate) fn invalidated_saved_review(&self, before: &Value, after: &Value, directory: &Path) -> Option<Value> {
+        for record in self.records.values() {
+            let Some(requirement) = record["requirement"].as_str() else {
+                continue;
+            };
+            if record["status"] != "satisfied" || matches!(requirement, "intent" | "reference" | "export_validation") {
+                continue;
+            }
+            let reviews = self.baseline_reviews(&record["evidence"]);
+            let Some(review) = reviews.iter().find(|review| review["command"].is_object()) else {
+                continue;
+            };
+            let object = record["object"].as_u64();
+            if !same_geometry(before, after, object) && self.status(record, before, directory) == "satisfied" {
+                return Some(json!({"requirement":requirement,"object":object,"evidence":review["evidence"],"command":review["command"]}));
+            }
+        }
+        None
+    }
+
+    pub(crate) fn affected_clearance(&self, before: &Value, after: &Value) -> Option<Value> {
+        let mut surfaces = BTreeMap::new();
+        for (name, preset) in &self.review_presets {
+            for check in preset["clearances"].as_array().into_iter().flatten() {
+                let Some(a) = clearance_object(&check["a"]) else { continue };
+                let Some(b) = clearance_object(&check["b"]) else { continue };
+                if a == b || after["objects"].get(a.to_string()).is_none() || after["objects"].get(b.to_string()).is_none() {
+                    continue;
+                }
+
+                let mut surface = |object| *surfaces.entry(object).or_insert_with(|| {
+                    let previous = geometry(before, Some(object));
+                    let current = geometry(after, Some(object));
+                    let changed = ["vertices", "faces"].iter().any(|key| previous[*key] != current[*key])
+                        || previous["object"]["origin"] != current["object"]["origin"];
+                    let triangles = current["faces"].as_object().into_iter().flatten()
+                        .filter_map(|(_, face)| face.as_array())
+                        .map(|face| face.len().saturating_sub(2)).sum::<usize>();
+                    (changed, triangles)
+                });
+                let (a_changed, a_triangles) = surface(a);
+                let (b_changed, b_triangles) = surface(b);
+                let triangle_pairs = a_triangles.saturating_mul(b_triangles);
+                if !(a_changed || b_changed) || !(1..=2_000_000).contains(&triangle_pairs) {
+                    continue;
+                }
+
+                let mut cue = json!({"preset":name,"check":check["name"],"pose":"current",
+                    "command":{"command":"measure_clearance","a":{"object":a},"b":{"object":b}}});
+                if let Some(minimum) = check["minimum"].as_f64().filter(|minimum| *minimum >= 0.0) {
+                    cue["minimum"] = json!(minimum);
+                }
+                return Some(cue);
+            }
+        }
+        None
     }
 
     fn next_action(&self, stage: &str, records: &[Value], mesh: &Value, directory: &Path) -> Value {

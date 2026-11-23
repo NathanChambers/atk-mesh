@@ -143,7 +143,11 @@ pub(super) fn components(mesh: &Mesh, object: u64) -> Vec<BTreeSet<u64>> {
                 .insert(face[i]);
         }
     }
-    let mut remaining = mesh.objects[&object].vertices.clone();
+    connected_components(&adjacency)
+}
+
+pub(super) fn connected_components(adjacency: &BTreeMap<u64, BTreeSet<u64>>) -> Vec<BTreeSet<u64>> {
+    let mut remaining: BTreeSet<_> = adjacency.keys().copied().collect();
     let mut groups = vec![];
     while let Some(seed) = remaining.first().copied() {
         let mut pending = vec![seed];

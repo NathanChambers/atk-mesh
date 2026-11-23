@@ -3,6 +3,8 @@ use std::io::{IsTerminal, Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod feedback;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -22,6 +24,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "\nUse --batch --input FILE to run a JSON array of commands in order. Stops at the first error; earlier commands remain applied. Each reply is one JSON line. --output is unavailable with --batch."
         );
+        println!("\nLocal reconstruction commands: reference_guides (JSON/SVG) and visual_hull (outer volume estimate as project JSON/OBJ). Both take --input and --output, with no editor required.");
+        println!("\nMesh sculpting: send JSON help with topic \"local-sculpting\" to an editor for move_vertices, sculpt_stroke, and local connectivity checks.");
+        println!("\nLocal feedback commands: feedback_submit (kind, summary, goal, observed) and feedback_list (optional kind, limit, before). Run as single JSON requests without an editor. MESH_FEEDBACK_DIR overrides the per-user inbox.");
         return Ok(());
     }
 
@@ -92,13 +97,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let port = port.unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "7878".into()));
-    let port: u16 = port
-        .parse()
-        .map_err(|_| "port must be an integer from 1 to 65535")?;
-    if port == 0 {
-        return Err("port must be an integer from 1 to 65535".into());
-    }
+    let read_port = || -> Result<u16, &'static str> {
+        let value = port.clone().unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "7878".into()));
+        value.parse().ok().filter(|port| *port != 0).ok_or("port must be an integer from 1 to 65535")
+    };
     let timeout = timeout
         .map(|value| {
             value.parse::<u64>().ok().filter(|seconds| *seconds > 0)
@@ -110,7 +112,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if batch || source.is_some() || output.is_some() || !positional.is_empty() {
             return Err("--list-workspaces does not take command input or output".into());
         }
-        let response = request_json("GET", "/workspaces", None, port, timeout.or(Some(Duration::from_secs(120))))?;
+        let response = request_json("GET", "/workspaces", None, read_port()?, timeout.or(Some(Duration::from_secs(120))))?;
         println!("{}", serde_json::to_string(&response)?);
         if response["ok"] != true {
             return Err("could not list mesh workspaces; see JSON response on stdout".into());
@@ -135,7 +137,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut request: Value = serde_json::from_str(input.trim_start_matches('\u{feff}'))?;
     if !batch {
-        return send(request, port, output.as_deref(), timeout);
+        if feedback::is_command(&request) {
+            if output.is_some() {
+                return Err("feedback commands write their replies to stdout; omit --output".into());
+            }
+            let result = feedback::run(&request)?;
+            println!("{}", serde_json::json!({"ok":true,"result":result}));
+            return Ok(());
+        }
+        if let Some(result) = gpt_mesh::reconstruction::run(&request, output.as_deref())? {
+            println!("{}", serde_json::json!({"ok":true,"result":result}));
+            return Ok(());
+        }
+        return send(request, read_port()?, output.as_deref(), timeout);
     }
 
     if output.is_some() {
@@ -147,6 +161,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|commands| !commands.is_empty() && commands.len() <= 1024)
         .ok_or("batch input must be a JSON array of 1..1024 commands")?;
     for (index, command) in commands.iter().enumerate() {
+        if feedback::is_command(command) {
+            return Err(format!("command {}: feedback commands must run without --batch", index + 1).into());
+        }
         if !command["command"]
             .as_str()
             .is_some_and(|name| !name.is_empty())
@@ -159,7 +176,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let response = request_json("POST", "/command", Some(&mut request), port, timeout)?;
+    let response = request_json("POST", "/command", Some(&mut request), read_port()?, timeout)?;
     if let Some(replies) = response["replies"].as_array() {
         for reply in replies {
             println!("{}", serde_json::to_string(reply)?);

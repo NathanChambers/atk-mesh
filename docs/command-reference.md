@@ -84,6 +84,12 @@ Each browser tab has its own mesh selection. The viewer polls the selected mesh'
 
 Each editor saves changes automatically and owns its own undo history. Stop an editor with Ctrl+C when you finish editing. The saved geometry, revision, workflow and replay remain available in the project viewer.
 
+Successful mesh edits include a compact top-level `turn_handoff` with the resulting revision and a workflow status request. Use the latest receipt when finishing the user's turn. Summarize what changed, what current evidence verifies, and any remaining uncertainty or next step. Check workflow status when checkpoint or export readiness matters. Selection changes, previews, and read-only commands omit the receipt.
+
+If an edit makes a satisfied modeling assessment stale and its evidence used a saved review with an unchanged preset, the receipt can include one `invalidated_review`. Its `command` reruns that preset at the resulting revision. Use it when the affected assessment matters to the task. Inspect the result before updating the assessment. This also works for edits committed through a transaction.
+
+If a committed edit changes a surface or pivot in an object-to-object clearance check from a saved review preset, the receipt can include one `affected_clearance`. Its `command` measures the pair at the resulting revision. Compare the returned distance with the cue's `minimum` when present. The measurement covers the current pose. Repeat at relevant open poses to check a moving part.
+
 When workspace persistence fails, the CLI prints the command reply and exits with status 1. A batch stops at that reply. `ok` reports whether the command succeeded, while `recording_error` reports the write failure. `persistence.revision` identifies the editor's current revision, and `persistence.revision_changed_in_memory` tells you whether the command advanced it. `persistence.project_saved` is true when that revision reached `project.json`, false when a required project write did not complete, and null when the command required no project write. Check these fields before resending an edit.
 
 ## Command discovery
@@ -93,6 +99,21 @@ Send `{"command":"help"}` for a short task index or `{"command":"help","all":tru
 The server embeds this reference, the modeling workflow, and the project guide. Topic responses contain `text`, `total` line count, `offset`, and `next_offset`. Pages default to 32 lines. Set `limit` to 1–256 and request the next page using the returned `next_offset` until it is null. Help is read-only and appears in the command recording. Invalid topic names or pagination values return a structured error.
 
 For a short inspect/edit/capture/save walkthrough, read `{"command":"help","topic":"minimal-example"}`.
+
+## CLI feedback
+
+Run `feedback_submit` and `feedback_list` as single JSON requests to `mesh-cli`. They work without a running editor and print JSON to stdout.
+
+```powershell
+'{"command":"feedback_submit","kind":"workflow","summary":"Document door swing reviews","goal":"Check clearance through the full swing","observed":"The guide covers the closed pose only","suggestion":"Add a worked example with intermediate poses","related":"help:workflow"}' | mesh-cli
+'{"command":"feedback_list","limit":32}' | mesh-cli
+```
+
+Use `missing_capability`, `command_issue`, `documentation`, or `workflow` as the kind. Include the goal, what you tried, what happened, and any workaround in the report. The required text fields are `summary`, `goal`, and `observed`. The optional `suggestion` and `related` fields accept text, including a command name, help topic, or replay trace reference. Omit credentials and sensitive project data. The CLI assigns an ID, timestamp, and version and returns the ID and inbox directory.
+
+`feedback_list` returns reports newest first. Filter by `kind` if needed. Pass the returned `next_before` as `before` with the same filter to read the next page. A null cursor marks the last page. The default limit is 32 and the maximum is 256.
+
+The inbox is shared across workspaces for the current OS user. It defaults to `%LOCALAPPDATA%\MeshWorkbench\feedback` on Windows, `~/Library/Application Support/MeshWorkbench/feedback` on macOS, and `$XDG_DATA_HOME/mesh-workbench/feedback` on Linux, with `~/.local/share/mesh-workbench/feedback` as the Linux fallback. Set `MESH_FEEDBACK_DIR` to an absolute directory path to override the default. The list response includes the resolved path even when empty.
 
 ## Batch commands
 
@@ -358,7 +379,7 @@ To recover an exact array or object from a previous compact reply, send `query_r
 | `texture_import`, `texture_define`, `texture_assign`, `texture_remove`, `texture_export` | Named image resources and face assignments | Direct texture mapping and PNG export; see the same appearance help topic |
 | `vertex_color_set`, `vertex_color_clear`, `query_vertex_colors` | Vertex IDs and normalized RGB | Direct vertex painting, exact queries and `capture` with `mode:"vertex_colors"` |
 | `uv_project`, `vertex_color_gradient`, `vertex_color_shade` | Explicit scopes, mapping bounds and paint parameters | Optional coordinate/normal operations; read help topic `native-appearance-recipes`; use CLI `--batch` for JSON command recipes |
-| `inspect_region` | `faces: [id,...]` and/or `vertices: [id,...]`, optional `object`, `response:"full"` | Read-only local positions, face loops, neighbors, adjacency, bounds and boundary edges. Default collections may be summarized; full returns exact region data. Vertex IDs expand to incident faces |
+| `inspect_region` | `faces: [id,...]` and/or `vertices: [id,...]`, optional `object`, `response:"full"` | Read-only local positions, face loops, neighbors, adjacency, bounds, boundary edges and disconnected-component count. Default collections may be summarized; full returns exact region data. Vertex IDs expand to incident faces |
 | `object_create_box` | `name`, `min`, `max`, optional `origin` | Add an independent object without replacing existing geometry; returns object ID |
 | `object_rename` | `object`, `name` | Set a unique object name |
 | `object_set_stage` | `object`, `stage`, optional `note` | Record progress. Production ready requires a completed object review and a note |
@@ -378,6 +399,8 @@ To recover an exact array or object from a previous compact reply, send `query_r
 | `select_box` | `min: [x,y,z]`, `max: [x,y,z]` | Inclusive spatial selection |
 | `select_image` | `view_id`, `rect: [left,top,right,bottom]`, optional `through` | Select vertices using capture pixel coordinates; defaults to visible only |
 | `move` | `value: [x,y,z]` | Translate selected vertices |
+| `move_vertices` | `object`, `offsets:[{vertex,delta:[x,y,z]},...]` | Apply distinct vertex offsets in one edit. See `local-sculpting` |
+| `sculpt_stroke` | `object`, `mode`, `radius`, `strength`, `samples:[{face,barycentric},...]`, optional `max_displacement`, `direction:[x,y,z]`, `continuous:true` | Raise or lower a connected neighborhood on a triangulated surface. See `local-sculpting` |
 | `scale` | `value: [x,y,z]` | Scale about selection center |
 | `rotate` | `value: [x,y,z]` | Rotate about selection center, degrees, X then Y then Z |
 | `extrude` | `face`, `value: [x,y,z]` | Replace face with displaced cap and side quads; select new vertices |
@@ -402,7 +425,7 @@ Cube face 4 is the top. IDs remain stable through transforms; extrusion and inse
 
 Place the source GLB inside the model workspace and send `{"command":"import_glb","path":"turret-top.glb"}`. Paths resolve relative to the active workspace and must remain inside it. Import appends to the current scene, including an empty workspace. Each mesh node becomes an independent object with its world transform baked into vertices and its transformed node origin as pivot. Mirrored transforms preserve winding. Indexed and non-indexed TRIANGLES with float positions are supported, including interleaved buffers. Source vertices are preserved without welding or simplification.
 
-For FBX, send `{"command":"import_fbx","path":"cargo.fbx"}`. The same workspace path and undo rules apply. FBX import keeps polygon boundaries and transforms each mesh node into an independent object with its node origin as pivot. Coordinates convert to right-handed Y-up meters. Import takes base geometry and omits UVs, source normals, colors, materials, textures, rigs and animation. FBX export remains available through `export` with `format:"fbx"`.
+For FBX, send `{"command":"import_fbx","path":"cargo.fbx"}`. The same workspace path and undo rules apply. FBX import keeps polygon boundaries and transforms each mesh node into an independent object with its node origin as pivot. Coordinates convert to right-handed Y-up meters. Import takes base geometry and omits UVs, source normals, colors, materials, textures, rigs and animation. FBX sources are limited to 512 MiB. Polygons with repeated vertex references or degenerate area are skipped and counted in the import result. FBX export remains available through `export` with `format:"fbx"`.
 
 Import is geometry only: UVs, textures, materials, vertex colors and source normals are not retained; the tool recomputes shading. Keep the original GLB alongside the project. Animation, skins, morph targets, required extensions, sparse/normalized geometry accessors, external buffers and non-triangle primitives are rejected. Imports are limited to 64 MiB and one million vertices/faces. Container and transform conventions follow the [Khronos glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html).
 
@@ -413,6 +436,30 @@ Set `$env:MESH_PORT = "7879"` before starting a server and invoking the CLI to w
 `{"command":"weld_coincident","object":2,"expected_removed_vertices":8546}` merges only vertices at exactly identical positions inside one object, retaining the smallest vertex ID. It never moves a position or removes a face. The required count guards the operation; invalid resulting topology rolls back the entire edit. Existing ownership, revision, undo and instance propagation rules apply. It does not merge nearby points.
 
 `{"command":"object_separate_faces","object":2,"parts":[{"name":"Hatch","faces":[123,124]}]}` transfers named, disjoint face sets to new independent objects. Some faces must remain on the source. Face IDs and surface coordinates remain unchanged. Shared cut vertices are duplicated, including disconnected fans at a boundary; interior vertex IDs survive. Source shading and collection memberships are copied; pivots default to the source origin or each part's optional `origin`. Make linked objects unique before separation. Matching borders remain open, without artificial caps. Both commands use native atomic edits, save/replay and undo/redo.
+
+### Local sculpting
+
+Open this topic with `{"command":"help","topic":"sculpt"}` or `topic:"local-sculpting"`.
+
+Use `inspect_region` with an object, face IDs, or vertex IDs to find the working patch. `topology.disconnected_components` counts groups connected by edges within that scope. Neighbor faces shown for context count only if included in the selected faces. A count greater than one can reveal separate pieces within a single object.
+
+Use `move_vertices` for explicit corrections. Supply 1–16,384 distinct vertices owned by one object. Every delta is in world units. The command applies the offsets in one edit and reports the number of moved vertices and maximum displacement.
+
+```json
+{"command":"move_vertices","object":1,"offsets":[{"vertex":5,"delta":[0,0,0.02]},{"vertex":6,"delta":[0,0,0.01]}]}
+```
+
+Use `sculpt_stroke` on a triangulated object. Each of the 1–128 samples identifies a face and three barycentric weights in the face's recorded vertex order. To anchor at the first corner use `[1,0,0]`. For the face center use equal weights. Use `mode:"raise"` to move along the local normal or `mode:"lower"` to move against it.
+
+```json
+{"command":"sculpt_stroke","object":1,"mode":"raise","radius":0.4,"strength":0.04,"max_displacement":0.025,"samples":[{"face":12,"barycentric":[0.3,0.3,0.4]}]}
+```
+
+The radius follows mesh edges from each sampled triangle. Overlapping samples use the strongest influence at each vertex, then the brush blends that influence across neighboring vertices inside its reach to soften steps along the stroke. `max_displacement` caps peak strength before falloff and defaults to `strength`. For relief or repeated passes, supply a fixed world-space `direction`, such as `[0,0,1]` on a +Z-facing relief. The CLI normalizes the vector and reverses it for `lower`. Open boundary vertices stay fixed. If a stroke reaches no movable vertices, use a larger radius or a denser patch. If it would collapse or flip a triangle, reduce strength or the displacement limit.
+
+For a clean relief curve, set `continuous:true` with a fixed `direction` and at least two anchors in stroke order. The brush measures distance to the segments between those anchors in the plane perpendicular to the direction. Keep consecutive anchors within one radius in that plane and on the same surface patch. A separate edge-distance falloff limits the edit to the neighborhood of the anchors. Use barycentric positions to follow the intended curve between mesh vertices. Each anchor can set `pressure` from 0 to 1 (default 1). Pressure blends linearly between anchors. Taper it to 0 at the ends to blend folds into the surrounding surface.
+
+Replace the example IDs with those from your patch. Capture a shaded oblique view before editing, use a small stroke to shape the highlight, and repeat the same view afterward. For smoothing an existing triangle surface see `relax_surface` in `bounded-surface-cleanup`. These edits preserve connectivity. Both support the normal revision guard, undo, and transaction previews.
 
 ### Bounded surface cleanup
 
@@ -995,6 +1042,8 @@ Read `instancing_review` in `workflow_status` at the start of blockout. Identify
 Use IDs returned by your model. Object queries report `master_object` and `instance_count`; the viewer labels each relationship. `query_instance` maps picked instance vertices/faces back to master IDs without dumping a complete mesh. After detaching, edit the object normally or create a new family of instances from it.
 
 Master vertex, topology and shading edits propagate in the same undoable transaction. Surviving source IDs retain their instance mappings; new topology receives new IDs, and deleted topology is removed from every linked copy. Each instance has its own name, pivot, collections and placement. Use `object_move`, `object_rotate` and `object_set_origin` for placement; these commands also work on a master without moving its followers. Collection transforms apply once to each member. Selection-based shape edits on instances are rejected with instructions to edit the master or make unique. Instance-specific scaling and nested instance chains are not supported yet. Create additional copies from the reported master.
+
+A direct `object_move` on a linked master reports `operation.linked_instances_unchanged` and a `shared_shape_edit` recipe. If you meant to change the shared shape, restore the master's intended placement first, then use the supplied selection and vertex move to update its copies.
 
 Deleting an instance leaves its master intact. A master with linked followers cannot be deleted until its instances are detached or deleted. Links survive save/load, undo/redo and workspace replay. Existing projects load without conversion. Copies inherit source collection memberships initially, and can then be organized independently.
 

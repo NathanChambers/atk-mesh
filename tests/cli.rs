@@ -170,7 +170,7 @@ GlobalSettings: {
 Objects: {
     Geometry: 100, "Geometry::Panel", "Mesh" {
         Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }
-        PolygonVertexIndex: *3 { a: 0,1,-3 }
+        PolygonVertexIndex: *6 { a: 0,1,-3,0,1,-1 }
     }
     Model: 200, "Model::Panel", "Mesh" {
         Properties70: {
@@ -193,6 +193,7 @@ Connections: {
     assert_eq!(mesh["objects"]["1"]["origin"], serde_json::json!([2.0, 0.0, 0.0]));
     assert_eq!(mesh["vertices"]["2"], serde_json::json!([1.0, 0.0, 0.0]));
     assert_eq!(mesh["faces"]["1"], serde_json::json!([1, 3, 2]));
+    assert_eq!(mesh["faces"].as_object().unwrap().len(), 1);
 }
 
 #[test]
@@ -255,6 +256,7 @@ fn camera_only_review_and_preview_commit_work_through_cli() {
         "preview":{"width":64,"height":64}
     }));
     assert_eq!(preview["ok"], true);
+    assert!(preview.get("turn_handoff").is_none());
     let request = serde_json::json!({
         "command":"transaction", "commit":true,
         "preview_id":preview["result"]["preview_id"], "revision":preview["result"]["revision"]
@@ -276,13 +278,19 @@ fn camera_only_review_and_preview_commit_work_through_cli() {
     assert_eq!(committed["ok"], true, "{committed}");
     let base = preview["result"]["revision"].as_u64().unwrap();
     assert_eq!(committed["result"]["revision"], base + 1);
+    assert_eq!(committed["turn_handoff"]["revision"], base + 1);
+    assert_eq!(committed["turn_handoff"]["workflow_status_command"]["command"], "workflow_status");
     assert!(committed["result"].get("defects_after").is_none());
     assert_eq!(send(request)["ok"], false);
     let state = send(serde_json::json!({"command":"query_mesh","kind":"objects"}));
     assert_eq!(state["result"]["items"][0]["origin"], serde_json::json!([2.0,0.0,0.0]));
+    assert!(state.get("turn_handoff").is_none());
     assert_eq!(send(serde_json::json!({"command":"undo"}))["ok"], true);
     let state = send(serde_json::json!({"command":"query_mesh","kind":"objects"}));
     assert_eq!(state["result"]["items"][0]["origin"], serde_json::json!([0.0,0.0,0.0]));
+    let selected = send(serde_json::json!({"command":"select","vertices":[1]}));
+    assert_eq!(selected["ok"], true);
+    assert!(selected.get("turn_handoff").is_none());
 }
 
 #[test]
