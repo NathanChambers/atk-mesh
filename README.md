@@ -5,6 +5,7 @@ Mesh Workbench is a local 3D modeling CLI designed for AI agents. An agent sends
 **Project status:** Experimental and under active development. The command API and workspace format may change.
 
 - **Model and inspect** meshes with geometry editing, topology views, measurements, and reference overlays.
+- **Refine an editable blockout** with solid booleans, connected rim bevels and creased Catmull–Clark subdivision. Rebuild named results from their source objects, unwrap and pack UV charts, and export selected objects with embedded PBR maps. [Commands and examples](docs/command-reference.md#editable-solids-and-subdivision)
 - **Preview materials and animation** with textures, vertex colors, clip playback, and rig overlays.
 - **Bring in existing geometry** from FBX or GLB. Save and review your work in native workspaces with command replay, and export OBJ, FBX, GLB, or mesh-only STL.
 

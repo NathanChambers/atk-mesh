@@ -13,7 +13,7 @@ pub enum WorkspaceHost {
 }
 
 impl WorkspaceHost {
-    pub fn open_editor(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open_editor(path: PathBuf, compress_recordings: bool) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&path)?;
         let lock = File::options()
             .read(true)
@@ -23,7 +23,7 @@ impl WorkspaceHost {
             .open(path.join(".mesh-editor.lock"))?;
         lock.try_lock()
             .map_err(|error| format!("cannot lock mesh workspace {}: {error}", path.display()))?;
-        let session = Session::open_workspace(path)?;
+        let session = Session::open_with_recording_compression(path, compress_recordings)?;
         Ok(Self::Editor {
             session,
             _lock: lock,

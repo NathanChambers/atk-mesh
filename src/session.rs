@@ -1,10 +1,13 @@
 use crate::{Document, base64, responses};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub struct Session {
+    compress_recordings: bool,
     document: Document,
     root: PathBuf,
     id: String,
@@ -15,12 +18,31 @@ pub struct Session {
     workflow: crate::workflow::Workflow,
 }
 
+#[derive(Serialize)]
+struct RecordedEvent<'a> {
+    summary: &'a Value,
+    input: &'a Value,
+    output: &'a Value,
+    full_output: &'a Value,
+}
+
+#[derive(Serialize)]
+struct WorkspaceProject<'a> {
+    version: u64,
+    mesh: &'a Value,
+    revision: &'a Value,
+}
+
 impl Session {
     pub fn new(root: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::create(root, Document::default(), None)
+        Self::create(root, Document::default(), None, false)
     }
 
     pub fn open_workspace(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::open_with_recording_compression(path, false)
+    }
+
+    pub fn open_with_recording_compression(path: PathBuf, compress_recordings: bool) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&path)?;
         let workspace = fs::canonicalize(path)?;
         let project_path = workspace.join("project.json");
@@ -37,7 +59,7 @@ impl Session {
                 document.revision = revision;
             }
         }
-        let session = Self::create(workspace.join("sessions"), document, Some(workspace))?;
+        let session = Self::create(workspace.join("sessions"), document, Some(workspace), compress_recordings)?;
         session.write_workspace_project(project_path)?;
         Ok(session)
     }
@@ -46,6 +68,7 @@ impl Session {
         root: PathBuf,
         mut document: Document,
         workspace: Option<PathBuf>,
+        compress_recordings: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let id = format!("{time}-{}", std::process::id());
@@ -53,6 +76,7 @@ impl Session {
         fs::create_dir_all(workspace.as_ref().unwrap_or(&root))?;
         let workflow = crate::workflow::Workflow::open(workspace.as_ref().unwrap_or(&root))?;
         let session = Self {
+            compress_recordings,
             document,
             root,
             id,
@@ -802,23 +826,40 @@ impl Session {
         Ok(result)
     }
 
-    fn write(&self, path: &str, value: &Value) -> std::io::Result<()> {
-        let destination = self.directory().join(path);
+    fn write(&self, path: &str, value: &impl Serialize) -> std::io::Result<()> {
+        let mut destination = self.directory().join(path);
+        if self.compress_recordings && (path.starts_with("states/") || path.starts_with("events/")) {
+            destination.set_extension("json.gz");
+        }
         Self::write_json(destination, value)
     }
 
-    fn write_json(destination: PathBuf, value: &Value) -> std::io::Result<()> {
+    fn write_json(destination: PathBuf, value: &impl Serialize) -> std::io::Result<()> {
         let temporary = destination.with_extension("tmp");
-        fs::write(&temporary, serde_json::to_vec(value)?)?;
+        {
+            let mut writer = BufWriter::new(fs::File::create(&temporary)?);
+            if destination.extension().is_some_and(|ext| ext == "gz") {
+                let mut gzip = flate2::write::GzEncoder::new(&mut writer, flate2::Compression::fast());
+                {
+                    let mut buffered = BufWriter::new(&mut gzip);
+                    serde_json::to_writer(&mut buffered, value)?;
+                    buffered.flush()?;
+                }
+                gzip.finish()?;
+            } else {
+                serde_json::to_writer(&mut writer, value)?;
+            }
+            writer.flush()?;
+        }
         fs::rename(temporary, destination)
     }
 
     fn write_workspace_project(&self, path: PathBuf) -> std::io::Result<()> {
-        let project = json!({
-            "version":self.document.project_version(),
-            "mesh":self.state["mesh"],
-            "revision":self.state["revision"]
-        });
+        let project = WorkspaceProject {
+            version: self.document.project_version(),
+            mesh: &self.state["mesh"],
+            revision: &self.state["revision"],
+        };
         Self::write_json(path, &project)
     }
 
@@ -1015,10 +1056,19 @@ impl Session {
         let mut invalidated_review = None;
         let mut affected_clearance = None;
         let changed = if state_changed {
-            let state = self
-                .document
-                .execute(json!({"command":"inspect"}))
-                .expect("inspect is read-only");
+            // Ordinary edits already computed the full inspection. Transaction and workflow
+            // replies can have different shapes and still need a fresh snapshot.
+            let snapshot = result.as_ref().ok().and_then(|value| {
+                if value["revision"].as_u64() != Some(self.document.revision()) {
+                    return None;
+                }
+                let fields = self.state.as_object()?.keys();
+                fields.map(|k| Some((k.clone(), value.get(k)?.clone()))).collect::<Option<serde_json::Map<_, _>>>()
+            });
+            let state = match snapshot {
+                Some(fields) => Value::Object(fields),
+                None => self.document.execute(json!({"command":"inspect"})).expect("inspect is read-only"),
+            };
             let changed = self.state["mesh"] != state["mesh"];
             if changed {
                 let previous = self.state["mesh"].as_object().expect("inspect returns a mesh");
@@ -1045,7 +1095,9 @@ impl Session {
                 if request["command"] == "inspect" {
                     value["workflow"] = json!({"command":"workflow_status","policy":"Default requirements apply to every workspace; satisfy or explicitly waive before detail/complete checkpoints and export."});
                 }
-                json!({"ok":true,"result":value})
+                let mut reply = json!({"ok":true});
+                reply["result"] = value;
+                reply
             }
             Err(error) => json!({"ok":false,"error":error}),
         };
@@ -1100,8 +1152,13 @@ impl Session {
         }
         output["trace"] = json!({"session":self.id,"event":id,"record":format!("/sessions/{}/events/{id}",self.id)});
         let summary = json!({"id":id,"command":request["command"],"ok":full["ok"],"timestamp_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),"duration_ms":duration,"request_bytes":request.to_string().len(),"response_bytes":output.to_string().len(),"full_response_bytes":full.to_string().len(),"revision_before":before_revision,"revision_after":self.state["revision"],"changed":changed,"snapshot":self.snapshot});
-        let event = json!({"summary":summary,"input":request,"output":output,"full_output":full});
         self.events.push(summary);
+        let event = RecordedEvent {
+            summary: self.events.last().unwrap(),
+            input: &request,
+            output: &output,
+            full_output: &full,
+        };
         let mut project_saved = self.workspace.as_ref().filter(|_| state_changed).map(|_| false);
         let persistence = (|| -> std::io::Result<()> {
             if state_changed {
@@ -1230,6 +1287,8 @@ impl Session {
     }
 
     fn read_recording_file(root: &Path, path: PathBuf, read_only: bool) -> Result<Value, String> {
+        let compressed = path.with_extension("json.gz");
+        let path = if !path.exists() && compressed.is_file() { compressed } else { path };
         let path = if read_only {
             let resolved = fs::canonicalize(path).map_err(|error| error.to_string())?;
             if !resolved.starts_with(root) {
@@ -1239,6 +1298,11 @@ impl Session {
         } else {
             path
         };
+        if path.extension().is_some_and(|ext| ext == "gz") {
+            let file = fs::File::open(path).map_err(|e| e.to_string())?;
+            let gzip = flate2::read::GzDecoder::new(file);
+            return serde_json::from_reader(std::io::BufReader::new(gzip)).map_err(|e| e.to_string());
+        }
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())
     }

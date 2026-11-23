@@ -59,7 +59,7 @@ pub(super) fn execute(request: &Value) -> Result<Value, String> {
         return Ok(json!({
             "tasks":{
                 "get_started":["minimal-example","project-integration"],
-                "model_geometry":["workflow","command-api","batch-commands"],
+                "model_geometry":["workflow","editable-solids-and-subdivision","command-api","batch-commands"],
                 "sculpt_geometry":["local-sculpting","bounded-surface-cleanup"],
                 "inspect_and_review":["object-detail-stages","capture-cameras","validation-render-modes","saved-reference-reviews"],
                 "plan_repeated_parts":["linked-mesh-instances"],

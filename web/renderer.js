@@ -99,7 +99,7 @@ void main() {
         if (surfaceUv.z < 0.5) { color = vec4(1.0, 0.0, 1.0, 1.0); return; }
         vec2 coordinates = vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y));
         vec4 texel = hasTexture ? texture(textureImage, coordinates) : vec4(vec3(0.5), 1.0);
-        vec3 base = pow(mix(vec3(128.0 / 255.0), texel.rgb, alphaCutoff >= 0.0 ? 1.0 : texel.a) * surfacePaint, vec3(2.2));
+        vec3 base = pow(texel.rgb * surfacePaint, vec3(2.2));
         float roughness = clamp(hasRoughness ? texture(roughnessImage, coordinates).r : 0.65, 0.04, 1.0);
         float metallic = hasMetallic ? texture(metallicImage, coordinates).r : 0.0;
         vec3 specular = hasSpecular ? texture(specularImage, coordinates).rgb : vec3(0.04);
@@ -129,11 +129,17 @@ void main() {
             diffuse += facing * weights[index];
             if (facing > 0.0) { highlight += pow(max(dot(n, normalize(lights[index] + viewDirection)), 0.0), exponent) * weights[index] * (0.5 + 1.5 * (1.0 - roughness)); }
         }
-        float ambient = 0.20 + 0.15 * (n.y * 0.5 + 0.5);
+        float ambient = 0.06 + 0.18 * (n.y * 0.5 + 0.5);
         vec3 f0 = mix(specular, base, metallic);
-        vec3 linearColor = base * (ambient + (1.0 - metallic) * diffuse) + f0 * highlight;
+        vec3 reflected = reflect(-viewDirection, n);
+        float overhead = max(reflected.y, 0.0);
+        float environment = 0.04 + 0.35 * mix(overhead * overhead, 0.35, roughness);
+        vec3 linearColor = base * (1.0 - metallic) * (ambient + diffuse) + f0 * (highlight + environment);
         if (texel.a < alphaCutoff) { discard; }
-        color = vec4(pow(linearColor / (linearColor + vec3(0.65)), vec3(1.0 / 2.2)), 1.0);
+        float peak = max(linearColor.r, max(linearColor.g, linearColor.b));
+        float shoulder = max(peak - 0.65, 0.0);
+        vec3 mapped = linearColor / (1.0 + shoulder * shoulder / (shoulder + 0.35));
+        color = vec4(pow(mapped, vec3(1.0 / 2.2)), 1.0);
         return;
     }
     if (surfaceMode == 10) { color = vec4(surfacePaint, 1.0); return; }
@@ -145,7 +151,7 @@ void main() {
         } else if (hasTexture) {
             vec4 texel = texture(textureImage, vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y)));
             if (texel.a < alphaCutoff) { discard; }
-            color = vec4(mix(vec3(128.0 / 255.0), texel.rgb, alphaCutoff >= 0.0 ? 1.0 : texel.a) * surfacePaint, 1.0);
+            color = vec4(texel.rgb * surfacePaint, 1.0);
         } else { color = vec4(vec3(128.0 / 255.0), 1.0); }
         return;
     }

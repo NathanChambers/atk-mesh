@@ -1,4 +1,4 @@
-use crate::{Mesh, geometry::{add, sub}, normals, rig::Interpolation};
+use crate::{Mesh, geometry::{add, sub, mul, cross, dot}, normals, rig::Interpolation};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -86,17 +86,117 @@ fn pack(document: &Value, binary: &[u8]) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
-pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
-    let rig = mesh.rig.as_ref().ok_or("animated GLB export requires a rig")?;
+fn material(
+    name: &str,
+    texture: &crate::uv::Texture,
+    images: &mut Vec<Value>,
+    buffer: &mut Buffer,
+) -> Result<Value, String> {
+    let mut embed = |label: &str, pixels: &[u8]| -> Result<Value, String> {
+        let png = crate::uv::encode_png(texture, pixels)?;
+        let index = images.len();
+        images.push(json!({"name":format!("{name} {label}"),"mimeType":"image/png","bufferView":buffer.view(png)}));
+        Ok(json!({"index":index}))
+    };
+    let mut base = crate::uv::pixels(texture)?;
+    if texture.alpha_cutoff.is_none() {
+        for pixel in base.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+    }
+    let base_color = embed("base color", &base)?;
+    let mut material = json!({"name":name,"doubleSided":true,"pbrMetallicRoughness":{"baseColorTexture":base_color}});
+    if let Some(cutoff) = texture.alpha_cutoff {
+        material["alphaMode"] = json!("MASK");
+        material["alphaCutoff"] = json!(cutoff);
+        material["extensions"] = json!({"KHR_materials_unlit":{}});
+        return Ok(material);
+    }
+    if texture.maps.contains_key("normal") {
+        let mut pixels = crate::painting::map_pixels(texture, "normal")?;
+        // The exported UVs reverse V, so the generated bitangent reverses too.
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[1] = 255 - pixel[1];
+        }
+        material["normalTexture"] = embed("normal", &pixels)?;
+    }
+    let pbr = &mut material["pbrMetallicRoughness"];
+    if texture.maps.contains_key("metallic") || texture.maps.contains_key("roughness") {
+        let metallic = crate::painting::map_pixels(texture, "metallic")?;
+        let mut packed = crate::painting::map_pixels(texture, "roughness")?;
+        for (pixel, metal) in packed.chunks_exact_mut(4).zip(metallic.chunks_exact(4)) {
+            pixel.copy_from_slice(&[255, pixel[0], metal[0], 255]);
+        }
+        pbr["metallicRoughnessTexture"] = embed("metallic roughness", &packed)?;
+    } else {
+        pbr["metallicFactor"] = json!(0);
+        pbr["roughnessFactor"] = json!(166.0 / 255.0);
+    }
+    Ok(material)
+}
+
+fn tangents(
+    positions: &[[f64; 3]],
+    normals: &[[f64; 3]],
+    uvs: &[[f64; 2]],
+    indices: &[u32],
+) -> Vec<[f64; 4]> {
+    let mut frames = vec![[[0.0; 3]; 2]; positions.len()];
+    for triangle in indices.chunks_exact(3) {
+        let ids = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
+        let Some([t, b]) = crate::material::frame(ids.map(|i| positions[i]), ids.map(|i| uvs[i]))
+        else {
+            continue;
+        };
+        for i in ids {
+            frames[i][0] = add(frames[i][0], t);
+            frames[i][1] = add(frames[i][1], b);
+        }
+    }
+    frames
+        .into_iter()
+        .zip(normals)
+        .map(|([t, b], &n)| {
+            let mut tangent = normals::unit(sub(t, mul(n, dot(t, n))));
+            if tangent == [0.0; 3] {
+                let axis = if n[0].abs() < 0.8 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0, 1.0, 0.0]
+                };
+                tangent = normals::unit(cross(n, axis));
+            }
+            let hand = if dot(cross(n, tangent), b) < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            [tangent[0], tangent[1], tangent[2], hand]
+        })
+        .collect()
+}
+
+pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility) -> Result<Vec<u8>, String> {
+    let rig = mesh.rig.as_ref();
+    let bones = rig.map_or(&[][..], |rig| rig.bones.as_slice());
     let mut buffer = Buffer::default();
-    let indices: BTreeMap<_, _> = rig.bones.iter().enumerate()
+    let indices: BTreeMap<_, _> = bones.iter().enumerate()
         .map(|(index, bone)| (bone.name.as_str(), index)).collect();
-    let mut nodes = vec![json!({"name":"Skeleton","children":[]})];
+    let mut nodes = Vec::new();
+    let mut scene_nodes = Vec::new();
+    if rig.is_some() {
+        nodes.push(json!({"name":"Skeleton","children":[]}));
+        scene_nodes.push(0);
+    }
     let mut offsets = Vec::new();
     let mut inverse = Vec::new();
-    for bone in &rig.bones {
+    for bone in bones {
         let parent = bone.parent.as_deref().map(|name| indices[name]);
-        let parent_position = parent.map_or([0.0; 3], |index| rig.bones[index].position);
+        let parent_position = parent.map_or([0.0; 3], |index| bones[index].position);
         let offset = sub(bone.position, parent_position);
         let child = nodes.len();
         let parent_node = parent.map_or(0, |index| index + 1);
@@ -106,8 +206,8 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         let [x, y, z] = bone.position;
         inverse.push([1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, -x,-y,-z,1.0]);
     }
-    let static_index = rig.bones.len();
-    if mesh.vertices.keys().any(|vertex| !rig.weights.contains_key(vertex)) {
+    let static_index = bones.len();
+    if rig.is_some_and(|rig| mesh.vertices.keys().any(|v| visibility.includes_vertex(v) && !rig.weights.contains_key(v))) {
         let child = nodes.len();
         nodes[0]["children"].as_array_mut().unwrap().push(json!(child));
         nodes.push(json!({"name":"Unweighted vertices"}));
@@ -119,19 +219,25 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         }
     }
     let joints: Vec<_> = (1..nodes.len()).collect();
-    let inverse_accessor = buffer.floats(&inverse, "MAT4", false)?;
-    let mut scene_nodes = vec![0];
+    let skin = if rig.is_some() {
+        Some(json!({"joints":joints,"skeleton":0,"inverseBindMatrices":buffer.floats(&inverse, "MAT4", false)?}))
+    } else {
+        None
+    };
     let mut meshes = Vec::new();
     let mut materials = Vec::new();
     let mut images = Vec::new();
     let mut texture_materials = BTreeMap::new();
     let normals = normals::corners(mesh);
     for object in mesh.objects.values() {
+        if !object.vertices.first().is_some_and(|v| visibility.includes_vertex(v)) {
+            continue;
+        }
         let mut groups = BTreeMap::<Option<&str>, Vec<_>>::new();
         for (face_id, face) in mesh.faces.iter().filter(|(_, face)| object.vertices.contains(&face[0])) {
             let name = mesh.face_textures.get(face_id).map(String::as_str);
-            let cutout = name.filter(|name| mesh.textures[*name].alpha_cutoff.is_some() && crate::uv::complete(mesh, *face_id));
-            groups.entry(cutout).or_default().push((face_id, face));
+            let binding = name.filter(|_| crate::uv::complete(mesh, *face_id));
+            groups.entry(binding).or_default().push((face_id, face));
         }
         let mut primitives = Vec::new();
         for (texture, faces) in groups {
@@ -150,7 +256,8 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
                     triangles.extend(triangle.map(|corner| base + corner as u32));
                 }
                 for (corner, id) in face.iter().enumerate() {
-                    positions.push(mesh.vertices[id]);
+                    let point = mesh.vertices[id];
+                    positions.push(if rig.is_some() { point } else { sub(point, object.origin) });
                     let normal = normals[face_id][corner];
                     shading.push(if normal == [0.0; 3] { [0.0, 1.0, 0.0] } else { normal });
                     let texel = mesh.uvs.get(face_id).and_then(|uv| uv.get(id));
@@ -160,6 +267,7 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
                     let color = mesh.vertex_colors.get(id);
                     has_color |= color.is_some();
                     colors.push(color.copied().unwrap_or([1.0; 3]));
+                    let Some(rig) = rig else { continue };
                     let mut joint = [0; 4];
                     let mut weight = [0.0; 4];
                     if let Some(influences) = rig.weights.get(id) {
@@ -181,10 +289,16 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
             }
             let position = buffer.floats(&positions, "VEC3", true)?;
             let normal = buffer.floats(&shading, "VEC3", false)?;
-            let weight = buffer.floats(&weights, "VEC4", false)?;
-            let joint = buffer.accessor(bindings.iter().flatten().flat_map(|value| value.to_le_bytes()), 5123, "VEC4", bindings.len(), None);
+            let mut attributes = json!({"POSITION":position,"NORMAL":normal});
+            if texture.is_some_and(|name| mesh.textures[name].alpha_cutoff.is_none() && mesh.textures[name].maps.contains_key("normal")) {
+                let tangents = tangents(&positions, &shading, &uv, &triangles);
+                attributes["TANGENT"] = json!(buffer.floats(&tangents, "VEC4", false)?);
+            }
             let triangles = buffer.accessor(triangles.iter().flat_map(|value| value.to_le_bytes()), 5125, "SCALAR", triangles.len(), None);
-            let mut attributes = json!({"POSITION":position,"NORMAL":normal,"JOINTS_0":joint,"WEIGHTS_0":weight});
+            if rig.is_some() {
+                attributes["WEIGHTS_0"] = json!(buffer.floats(&weights, "VEC4", false)?);
+                attributes["JOINTS_0"] = json!(buffer.accessor(bindings.iter().flatten().flat_map(|value| value.to_le_bytes()), 5123, "VEC4", bindings.len(), None));
+            }
             if has_uv {
                 attributes["TEXCOORD_0"] = json!(buffer.floats(&uv, "VEC2", false)?);
             }
@@ -192,23 +306,21 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
                 attributes["COLOR_0"] = json!(buffer.floats(&colors, "VEC3", false)?);
             }
             let mut primitive = json!({"attributes":attributes,"indices":triangles});
+            let element_view = buffer.accessors[triangles]["bufferView"].as_u64().unwrap() as usize;
+            buffer.views[element_view]["target"] = json!(34963);
+            for accessor in primitive["attributes"].as_object().unwrap().values() {
+                let index = accessor.as_u64().unwrap() as usize;
+                let view = buffer.accessors[index]["bufferView"].as_u64().unwrap() as usize;
+                buffer.views[view]["target"] = json!(34962);
+            }
             if let Some(name) = texture {
                 let material = if let Some(&material) = texture_materials.get(name) {
                     material
                 } else {
-                    let texture = &mesh.textures[name];
-                    let pixels = crate::uv::pixels(texture)?;
-                    let png = crate::uv::encode_png(texture, &pixels)?;
-                    let image = images.len();
-                    images.push(json!({"name":name,"mimeType":"image/png","bufferView":buffer.view(png)}));
-                    let material = materials.len();
-                    materials.push(json!({
-                        "name":name,"alphaMode":"MASK","alphaCutoff":texture.alpha_cutoff,
-                        "doubleSided":true,"pbrMetallicRoughness":{"baseColorTexture":{"index":image}},
-                        "extensions":{"KHR_materials_unlit":{}}
-                    }));
-                    texture_materials.insert(name, material);
-                    material
+                    let index = materials.len();
+                    materials.push(material(name, &mesh.textures[name], &mut images, &mut buffer)?);
+                    texture_materials.insert(name, index);
+                    index
                 };
                 primitive["material"] = json!(material);
             }
@@ -218,12 +330,18 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
             continue;
         }
         scene_nodes.push(nodes.len());
-        nodes.push(json!({"name":object.name,"mesh":meshes.len(),"skin":0}));
+        let mut node = json!({"name":object.name,"mesh":meshes.len()});
+        if rig.is_some() {
+            node["skin"] = json!(0);
+        } else {
+            node["translation"] = json!(object.origin);
+        }
+        nodes.push(node);
         meshes.push(json!({"name":object.name,"primitives":primitives}));
     }
 
     let mut animations = Vec::new();
-    for (name, clip) in &rig.clips {
+    for (name, clip) in rig.into_iter().flat_map(|rig| &rig.clips) {
         let mut channels = Vec::new();
         let mut samplers = Vec::new();
         for (bone, keys) in &clip.tracks {
@@ -272,16 +390,24 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         animations.push(json!({"name":name,"channels":channels,"samplers":samplers,"extras":{"looping":clip.looping,"duration":clip.duration}}));
     }
 
+    if meshes.is_empty() {
+        return Err("no visible faces to export".into());
+    }
     let mut document = json!({
         "asset":{"version":"2.0","generator":"gpt-mesh"},"scene":0,"scenes":[{"nodes":scene_nodes}],
-        "nodes":nodes,"meshes":meshes,"skins":[{"joints":joints,"skeleton":0,"inverseBindMatrices":inverse_accessor}],
+        "nodes":nodes,"meshes":meshes,
         "accessors":buffer.accessors,"bufferViews":buffer.views,"buffers":[{"byteLength":buffer.bytes.len()}]
     });
+    if let Some(skin) = skin {
+        document["skins"] = json!([skin]);
+    }
     if !animations.is_empty() {
         document["animations"] = json!(animations);
     }
     if !materials.is_empty() {
-        document["extensionsUsed"] = json!(["KHR_materials_unlit"]);
+        if materials.iter().any(|material| material.get("extensions").is_some()) {
+            document["extensionsUsed"] = json!(["KHR_materials_unlit"]);
+        }
         document["textures"] = json!((0..images.len()).map(|source| json!({"sampler":0,"source":source})).collect::<Vec<_>>());
         document["samplers"] = json!([{"magFilter":9728,"minFilter":9728}]);
         document["images"] = json!(images);

@@ -128,6 +128,140 @@ pub(super) fn loft(mesh: &mut Mesh, request: &Value, strip: bool) -> Result<Valu
     )
 }
 
+fn bevel_rim(
+    mesh: &mut Mesh,
+    object: u64,
+    edges: Vec<[u64; 2]>,
+    width: f64,
+    segments: usize,
+) -> Result<Value, String> {
+    let edge = |a: u64, b: u64| (a.min(b), a.max(b));
+    let selected: BTreeSet<_> = edges.iter().map(|[a, b]| edge(*a, *b)).collect();
+    if selected.len() != edges.len() || !(3..=1024).contains(&edges.len()) {
+        return Err("rim bevel requires 3..1024 distinct edges of a cap".into());
+    }
+    let (&cap, ring) = mesh
+        .faces
+        .iter()
+        .find(|(_, face)| {
+            mesh.objects[&object].vertices.contains(&face[0])
+                && face.len() == selected.len()
+                && (0..face.len())
+                    .all(|i| selected.contains(&edge(face[i], face[(i + 1) % face.len()])))
+        })
+        .ok_or("rim edges must form the complete perimeter of one convex planar face")?;
+    let ring = ring.clone();
+    let n = ring.len();
+    let (normal, _) = topology::convex_face(mesh, &ring)?;
+    let incidence = crate::surface_ops::edges(mesh, Some(object));
+    let mut side_edges: BTreeMap<_, Vec<u64>> = ring.iter().map(|v| (*v, Vec::new())).collect();
+    for &(a, b) in incidence.keys().filter(|e| !selected.contains(e)) {
+        if let Some(neighbors) = side_edges.get_mut(&a) {
+            neighbors.push(b);
+        }
+        if let Some(neighbors) = side_edges.get_mut(&b) {
+            neighbors.push(a);
+        }
+    }
+    let mut sides = BTreeSet::new();
+    let mut offsets = Vec::new();
+    for (i, &id) in ring.iter().enumerate() {
+        let previous = ring[(i + n - 1) % n];
+        let next = ring[(i + 1) % n];
+        let neighbors = incidence
+            .get(&edge(id, next))
+            .filter(|pair| pair.len() == 2)
+            .ok_or("rim needs a closed side wall")?;
+        sides.extend(neighbors.iter().map(|p| p.0).filter(|f| *f != cap));
+        let [end] = side_edges[&id].as_slice() else {
+            return Err("rim corners must each have exactly three incident edges".into());
+        };
+        let p = mesh.vertices[&id];
+        let down = sub(mesh.vertices[end], p);
+        if dot(normals::unit(down), normal) > -1.0 + 1e-10 || length(down) <= width {
+            return Err(
+                "rim needs perpendicular side edges longer than the requested bevel width".into(),
+            );
+        }
+        let a = cross(normal, normals::unit(sub(p, mesh.vertices[&previous])));
+        let b = cross(normal, normals::unit(sub(mesh.vertices[&next], p)));
+        let sum = add(a, b);
+        let divisor = dot(sum, b);
+        if divisor <= 1e-10 {
+            return Err("rim corner has a reversing miter".into());
+        }
+        offsets.push(mul(sum, width / divisor));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let side = sub(mesh.vertices[&ring[j]], mesh.vertices[&ring[i]]);
+        let inset = add(side, sub(offsets[j], offsets[i]));
+        if dot(side, inset) <= 0.0 {
+            return Err("bevel width collapses the cap; reduce width".into());
+        }
+    }
+    let mut rings = Vec::new();
+    for step in 0..segments {
+        let angle = std::f64::consts::FRAC_PI_2 * step as f64 / segments as f64;
+        let mut section = Vec::new();
+        for (i, &id) in ring.iter().enumerate() {
+            let offset = add(
+                mul(offsets[i], 1.0 - angle.sin()),
+                mul(normal, -width * (1.0 - angle.cos())),
+            );
+            let v = mesh.add_vertex(add(mesh.vertices[&id], offset))?;
+            if let Some(color) = mesh.vertex_colors.get(&id).copied() {
+                mesh.vertex_colors.insert(v, color);
+            }
+            if let Some(rig) = &mut mesh.rig
+                && let Some(weights) = rig.weights.get(&id).cloned()
+            {
+                rig.weights.insert(v, weights);
+            }
+            section.push(v);
+        }
+        rings.push(section);
+    }
+    let created: Vec<_> = rings.iter().flatten().copied().collect();
+    mesh.objects
+        .get_mut(&object)
+        .unwrap()
+        .vertices
+        .extend(&created);
+    for id in &ring {
+        mesh.vertices
+            .insert(*id, sub(mesh.vertices[id], mul(normal, width)));
+    }
+    let top = &rings[0];
+    mesh.faces.insert(cap, top.clone());
+    let remap = ring.iter().copied().zip(top.iter().copied()).collect();
+    crate::uv::copy_face(mesh, cap, cap, &remap);
+    for side in &sides {
+        topology::convex_face(mesh, &mesh.faces[side])?;
+    }
+    topology::convex_face(mesh, top)?;
+    rings.push(ring);
+    let mut faces = Vec::new();
+    for pair in rings.windows(2) {
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let quad = vec![pair[0][j], pair[0][i], pair[1][i], pair[1][j]];
+            topology::convex_face(mesh, &quad)?;
+            faces.push(mesh.add_face(quad)?);
+        }
+    }
+    for component in mesh.components.values_mut() {
+        if component.faces.contains(&cap) && sides.is_subset(&component.faces) {
+            component.faces.extend(&faces);
+        }
+    }
+    mesh.selection = created.iter().copied().collect();
+    topology::validate_topology(mesh)?;
+    Ok(
+        json!({"object":object,"cap":cap,"created_vertices":created,"created_faces":faces,"width":width,"segments":segments,"corner_mode":"rim","appearance":"new bevel faces need UVs and material assignment"}),
+    )
+}
+
 pub(super) fn bevel(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
     let object = crate::surface_ops::object(mesh, request)?;
     let edges: Vec<[u64; 2]> = serde_json::from_value(request["edges"].clone())
@@ -141,8 +275,11 @@ pub(super) fn bevel(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
             .filter(|v| *v > 0 && *v <= 32)
             .ok_or("segments must be 1..32")
     })? as usize;
+    if request["corner_mode"] == "rim" {
+        return bevel_rim(mesh, object, edges, width, segments);
+    }
     if request["corner_mode"].as_str() != Some("isolated") {
-        return Err("corner_mode must explicitly be isolated; shared selected-edge corners require separate patch construction".into());
+        return Err("corner_mode must be isolated or rim".into());
     }
     if edges.is_empty() || edges.len() > 128 {
         return Err("provide 1..128 isolated edges".into());

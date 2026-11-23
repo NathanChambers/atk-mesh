@@ -26,6 +26,8 @@ pub(super) fn generator(command: &str) -> bool {
             | "sweep"
             | "loft"
             | "quad_strip"
+            | "solid_boolean"
+            | "subdivision_surface"
     )
 }
 
@@ -188,6 +190,7 @@ pub(super) fn remove(mesh: &mut Mesh, faces: &BTreeSet<u64>) {
     }
     mesh.flat_faces.retain(|id| !faces.contains(id));
     crate::uv::reconcile(mesh);
+    crate::rig::reconcile(mesh);
 }
 
 pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
@@ -217,6 +220,7 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
         .map(|v| v.as_str().ok_or("region must be a name"))
         .transpose()?;
     let mut replaced = BTreeSet::new();
+    let mut finish = None;
     let component_id = if mode == Some("replace_region") {
         let object = object.ok_or("replace_region requires object")?;
         let name = existing_region.ok_or("replace_region requires region")?;
@@ -233,6 +237,10 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
             return Err("region shares vertices with surrounding surfaces; detach or use surface repair instead of replacing a component".into());
         }
         replaced = component.faces.clone();
+        let prior = component.recipe.as_ref().and_then(|r| r["command"].as_str());
+        if (prior == Some(command) || (prior == Some("object_create_box") && command == "object_add_box")) && !matches!(command, "solid_boolean" | "subdivision_surface") {
+            finish = Some(ComponentFinish::read(mesh, &replaced));
+        }
         remove(mesh, &replaced);
         id
     } else {
@@ -258,6 +266,8 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
         "revolve" => crate::shaping::revolve(mesh, request)?,
         "extrude_polygon" => crate::shaping::extrude_polygon(mesh, request)?,
         "sweep" => crate::sweep::create(mesh, request)?,
+        "solid_boolean" => crate::solid::generate(mesh, request)?,
+        "subdivision_surface" => crate::subdivision::generate(mesh, request)?,
         "loft" | "quad_strip" => crate::connected::loft(mesh, request, command == "quad_strip")?,
         _ => return Err("unknown construction generator".into()),
     };
@@ -276,6 +286,9 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
     let name = existing_region
         .map(str::to_string)
         .unwrap_or_else(|| format!("component-{component_id}"));
+    if let Some(finish) = finish {
+        operation["finish_transferred"] = json!(finish.apply(mesh, &created_faces));
+    }
     mesh.components.insert(
         component_id,
         Component {
@@ -316,4 +329,88 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
     operation["bounds"] = new_bounds;
     operation["warnings"] = json!(candidates);
     Ok(operation)
+}
+
+struct FaceFinish {
+    ring: Vec<u64>,
+    uvs: Option<std::collections::BTreeMap<u64, [f64; 2]>>,
+    texture: Option<String>,
+    flat: bool,
+}
+
+struct ComponentFinish {
+    faces: Vec<FaceFinish>,
+    vertices: Vec<(u64, Option<[f64; 3]>, Option<Vec<crate::rig::Influence>>)>,
+}
+
+impl ComponentFinish {
+    fn read(mesh: &Mesh, faces: &BTreeSet<u64>) -> Self {
+        let vertices = vertices(mesh, faces)
+            .into_iter()
+            .map(|v| {
+                let weights = mesh
+                    .rig
+                    .as_ref()
+                    .and_then(|rig| rig.weights.get(&v))
+                    .cloned();
+                (v, mesh.vertex_colors.get(&v).copied(), weights)
+            })
+            .collect();
+        let faces = faces
+            .iter()
+            .map(|id| FaceFinish {
+                ring: mesh.faces[id].clone(),
+                uvs: mesh.uvs.get(id).cloned(),
+                texture: mesh.face_textures.get(id).cloned(),
+                flat: mesh.flat_faces.contains(id),
+            })
+            .collect();
+        Self { faces, vertices }
+    }
+
+    fn apply(self, mesh: &mut Mesh, faces: &BTreeSet<u64>) -> bool {
+        let vertices = vertices(mesh, faces);
+        if self.faces.len() != faces.len() || self.vertices.len() != vertices.len() {
+            return false;
+        }
+        let remap: std::collections::BTreeMap<_, _> = self
+            .vertices
+            .iter()
+            .zip(vertices)
+            .map(|((v, _, _), new)| (*v, new))
+            .collect();
+        for (old, id) in self.faces.iter().zip(faces) {
+            if !old
+                .ring
+                .iter()
+                .map(|v| remap[v])
+                .eq(mesh.faces[id].iter().copied())
+            {
+                return false;
+            }
+        }
+        for (old, &id) in self.faces.into_iter().zip(faces) {
+            if let Some(uvs) = old.uvs {
+                mesh.uvs
+                    .insert(id, uvs.into_iter().map(|(v, uv)| (remap[&v], uv)).collect());
+            }
+            if let Some(texture) = old.texture {
+                mesh.face_textures.insert(id, texture);
+            }
+            if old.flat {
+                mesh.flat_faces.insert(id);
+            }
+        }
+        for (v, color, weights) in self.vertices {
+            if let Some(color) = color {
+                mesh.vertex_colors.insert(remap[&v], color);
+            }
+            if let Some(rig) = &mut mesh.rig
+                && let Some(weights) = weights
+            {
+                rig.weights.insert(remap[&v], weights);
+            }
+        }
+        true
+    }
 }

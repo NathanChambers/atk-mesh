@@ -216,7 +216,15 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
         );
     }
     let mut texture = mesh.textures.get(&name).ok_or("unknown texture")?.clone();
-    if command.starts_with("texture_mask_") {
+    let mut projection = None;
+    if command == "texture_bake_normals" {
+        if texture.paint.as_ref().is_some_and(|paint| paint.normal_from_height.is_some()) {
+            return Err("disable texture_normal_from_height before baking geometry normals into the same channel".into());
+        }
+        let (pixels, report) = crate::normal_bake::bake(mesh, [texture.width,texture.height], Some(&name), request, false)?;
+        stack(&mut texture).base.insert("normal".into(), base64::encode(&pixels));
+        projection = Some(report);
+    } else if command.starts_with("texture_mask_") {
         let mask_name = label(request, "name")?;
         let paint = stack(&mut texture);
         match command {
@@ -490,9 +498,11 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
     let layers = texture.paint.as_ref().map_or(0, |paint| paint.layers.len());
     mesh.textures.insert(name.clone(), texture);
     validate_budget(mesh)?;
-    Ok(
-        json!({"texture":name,"layers":layers,"baked":true,"channels":mesh.textures[&name].maps.keys().collect::<Vec<_>>(),"shared_resource":true}),
-    )
+    let mut result = json!({"texture":name,"layers":layers,"baked":true,"channels":mesh.textures[&name].maps.keys().collect::<Vec<_>>(),"shared_resource":true});
+    if let Some(projection) = projection {
+        result["projection"] = projection;
+    }
+    Ok(result)
 }
 
 fn normalized(value: f64) -> bool {

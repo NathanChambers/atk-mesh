@@ -334,6 +334,7 @@ pub(super) fn execute(document: &mut Document, request: &Value) -> Result<Value,
                 | "redo"
                 | "transaction"
                 | "export"
+                | "bake_surface_map"
                 | "save"
                 | "capture"
                 | "measure_clearance"

@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "\nList meshes: mesh-cli --port 7878 --list-workspaces\nStart an editor: mesh-server --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
         );
+        println!("Editor storage: add --compress-recordings to gzip new replay events and snapshots.");
         return Ok(());
     }
 
@@ -30,12 +31,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut project = None;
     let mut port = None;
     let mut headless = false;
+    let mut compress_recordings = false;
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
         let target = match argument.as_str() {
             "--workspace" => &mut workspace,
             "--project" => &mut project,
             "--port" => &mut port,
+            "--compress-recordings" => {
+                compress_recordings = true;
+                continue;
+            }
             "--headless" => {
                 if headless {
                     return Err("--headless specified more than once".into());
@@ -65,6 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if workspace.is_some() && project.is_some() {
         return Err("A viewer root and --workspace are mutually exclusive".into());
     }
+    if compress_recordings && workspace.is_none() {
+        return Err("--compress-recordings requires a workspace editor".into());
+    }
     let port = port.unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "7878".into()));
     let port: u16 = port
         .parse()
@@ -75,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     let mut host = if let Some(workspace) = workspace {
-        WorkspaceHost::open_editor(PathBuf::from(workspace))?
+        WorkspaceHost::open_editor(PathBuf::from(workspace), compress_recordings)?
     } else {
         let root = project.as_deref().unwrap_or(".");
         WorkspaceHost::open_viewer(Path::new(root))?

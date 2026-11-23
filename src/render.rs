@@ -474,7 +474,7 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                             if crate::uv::below_cutoff(texture.alpha_cutoff, data[index + 3]) {
                                 return None;
                             }
-                            let color = crate::uv::sample(texture, data, uv, texture.alpha_cutoff.is_none());
+                            let color = crate::uv::sample(texture, data, uv, false);
                             std::array::from_fn(|axis| {
                                 (f64::from(color[axis]) * paint[axis])
                                     .round()

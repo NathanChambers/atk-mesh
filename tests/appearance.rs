@@ -150,6 +150,22 @@ fn cpu_captures_show_texture_orientation_tiling_vertex_paint_and_missing_uvs() {
 }
 
 #[test]
+fn opaque_preview_preserves_rgb_even_when_texture_alpha_is_partial() {
+    let mut document = Document::default();
+    front_uvs(&mut document);
+    let capture = |document: &mut Document, alpha| {
+        let pixels = base64::encode(&[240, 22, 8, alpha]);
+        document.execute(json!({"command":"texture_define","name":"paint","width":1,"height":1,"rgba_base64":pixels})).unwrap();
+        document.execute(json!({"command":"texture_assign","faces":[2],"texture":"paint"})).unwrap();
+        ["textured", "material"].map(|mode| {
+            let reply = document.execute(json!({"command":"capture","mode":mode,"width":64,"height":64,"yaw":0,"pitch":0,"zoom":20})).unwrap();
+            image(&reply).1
+        })
+    };
+    assert_eq!(capture(&mut document, 255), capture(&mut document, 64));
+}
+
+#[test]
 fn cutout_pixels_reveal_geometry_behind_and_export_as_a_masked_glb_material() {
     let mut document = Document::default();
     front_uvs(&mut document);

@@ -150,3 +150,7 @@ This is an alternative transport to the same server; workflow gates, recordings 
 Each editor handles requests sequentially for its own mesh. The project viewer reads saved revisions independently. Workflow checkpoints require visual review. See the README for topology, rendering, import and export limitations.
 
 For tool development, run `cargo test --locked` and `npm test` in the tool checkout. The Rust CLI integration tests start an isolated server and temporary workspace. Legacy Python smoke scripts can replace the active model, so run them only against a disposable workspace on a separate port.
+
+For large assets, start the editor with `--compress-recordings` to store new replay states and events as gzip JSON. The project and session index stay directly readable. The current CLI and project viewer resolve either encoding on the usual replay routes. Use an updated viewer to read compressed sessions.
+
+Run `cargo run --release --locked --example bench_dense -- NEW_DIRECTORY 100000` to time workspace open, a sculpt stroke, capture, undo, save and reopen on a triangular grid. Use `1000000` for the larger fixture and append `--compress-recordings` for a storage comparison. Each run creates a fresh directory and prints elapsed milliseconds and cumulative on-disk bytes.

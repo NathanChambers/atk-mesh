@@ -8,6 +8,10 @@ license = "MIT"
 repository = "https://github.com/NathanChambers/mesh-workbench"
 
 [dependencies]
+flate2 = "1.1"
+manifold-rust = "0.19.6"
+rstar = "0.14.0"
+uvunwrap = { version = "0.3.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 png = "0.17.16"

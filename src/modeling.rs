@@ -46,7 +46,7 @@ pub(super) fn resolve_request(mesh: &Mesh, mut request: Value) -> Result<Value, 
         || command == "select_region"
         || matches!(
             command,
-            "inspect_defects" | "query_components" | "measure_clearance" | "inspect_volume"
+            "inspect_defects" | "query_components" | "measure_clearance" | "inspect_volume" | "regenerate_component"
         )
     {
         return Ok(request);
@@ -74,6 +74,8 @@ pub(super) fn resolve_request(mesh: &Mesh, mut request: Value) -> Result<Value, 
                 | "uv_clear"
                 | "uv_transform"
                 | "uv_project"
+                | "uv_unwrap"
+                | "uv_pack"
                 | "query_uv"
                 | "inspect_uv"
                 | "capture_uv"
@@ -118,6 +120,28 @@ fn name(request: &Value) -> Result<String, String> {
 
 pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
     match command {
+        "regenerate_component" => {
+            let region = request["region"].as_str().ok_or("region must name a generated component")?;
+            let id = construction::named(mesh, region)?;
+            let mut recipe = mesh.components[&id].recipe.clone().ok_or("region has no saved generator recipe")?;
+            if let Some(overrides) = request.get("overrides") {
+                for (key, value) in overrides.as_object().ok_or("overrides must be an object")? {
+                    if matches!(key.as_str(), "command" | "object" | "region" | "name" | "mode") {
+                        return Err(format!("cannot override generator identity field {key}"));
+                    }
+                    recipe[key] = value.clone();
+                }
+            }
+            let command = match recipe["command"].as_str().ok_or("invalid generator recipe")? {
+                "object_create_box" => "object_add_box".to_string(),
+                command => command.to_string(),
+            };
+            recipe["command"] = json!(command);
+            recipe["region"] = json!(region);
+            recipe["object"] = json!(request["object"].as_u64().ok_or("object must identify the component owner")?);
+            recipe["mode"] = json!("replace_region");
+            construction::generate(mesh, &command, &recipe)
+        }
         "region_define" => {
             let name = name(request)?;
             let faces = crate::diagnostics::faces(mesh, request)?;

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod alignment;
 mod animated_glb;
+mod atlas;
 mod appearance_tools;
 pub mod base64;
 mod camera_fit;
@@ -23,6 +24,7 @@ mod instances;
 mod material;
 mod modeling;
 mod normals;
+mod normal_bake;
 mod object_review;
 mod objects;
 mod paint_masks;
@@ -37,6 +39,9 @@ pub mod reconstruction;
 pub mod session;
 mod shaping;
 mod stl;
+mod stretch;
+mod solid;
+mod subdivision;
 mod surface;
 mod surface_ops;
 mod surface_paint;
@@ -235,6 +240,7 @@ impl Document {
             "inspect_uv" => uv::inspect(&self.mesh, &request, self.revision),
             "capture_uv" => uv::capture(&self.mesh, &request, self.revision),
             "texture_export" => uv::export_texture(&self.mesh, &request),
+            "bake_surface_map" => normal_bake::export(&self.mesh, &request, self.revision),
             "query_mesh" => responses::query_mesh(&self.mesh, &request, self.revision),
             "query_rig" => Ok(rig::query(&self.mesh, &request)),
             "query_animation" => rig::query_animation(&self.mesh, &request, self.revision),
@@ -251,13 +257,18 @@ impl Document {
                     return Err("cannot export an empty scene; create or import geometry first".into());
                 }
                 let format = request["format"].as_str().unwrap_or("obj");
+                let filtered = ["solo_objects", "hide_objects", "solo_collections", "hide_collections"].iter().any(|key| request.get(key).is_some());
+                if filtered && format != "glb" {
+                    return Err("export visibility filters currently require format glb".into());
+                }
+                let visibility = render::CaptureVisibility::parse(&request, &self.mesh)?;
                 let mut result = match format {
                     "obj" => json!({"obj": self.export_obj()}),
                     "fbx" => {
                         json!({"fbx_base64": base64::encode(&fbx::export(&self.mesh)?),"format":"fbx","version":7400,"unit":"meter","up_axis":"Y"})
                     }
                     "glb" => {
-                        json!({"glb_base64": base64::encode(&animated_glb::export(&self.mesh)?),"format":"glb","version":2,"unit":"meter","up_axis":"Y"})
+                        json!({"glb_base64": base64::encode(&animated_glb::export(&self.mesh, &visibility)?),"format":"glb","version":2,"unit":"meter","up_axis":"Y"})
                     }
                     "stl" => {
                         json!({"stl_base64": base64::encode(&stl::export(&self.mesh)?),"format":"stl","unit":"millimeter","up_axis":"Z"})
@@ -267,10 +278,16 @@ impl Document {
                 let mut warnings = Vec::new();
                 if format == "stl" {
                     warnings.push("STL contains triangle geometry only. Import using millimeters.");
-                } else if self.mesh.face_textures.iter().any(|(face, name)| {
-                    format != "glb" || self.mesh.textures[name].alpha_cutoff.is_none() || !uv::complete(&self.mesh, *face)
+                } else if self.mesh.face_textures.keys().any(|face| {
+                    visibility.includes_vertex(&self.mesh.faces[face][0]) && (format != "glb" || !uv::complete(&self.mesh, *face))
                 }) {
-                    warnings.push("UV coordinates and vertex colors are exported. Texture image bindings remain in the native project; export images separately with texture_export and bind them in the consuming application.");
+                    warnings.push("Some assigned textures could not be bound. GLB needs complete face UVs. For other formats, export images with texture_export and bind them in the consuming application.");
+                }
+                if format == "glb" && self.mesh.face_textures.iter().any(|(face, name)| {
+                    let texture = &self.mesh.textures[name];
+                    visibility.includes_vertex(&self.mesh.faces[face][0]) && texture.maps.keys().any(|key| texture.alpha_cutoff.is_some() || matches!(key.as_str(), "height" | "specular"))
+                }) {
+                    warnings.push("Height, specular and cutout detail maps remain available through texture_export.");
                 }
                 if self.mesh.rig.is_some() && format != "glb" {
                     warnings.push("Export contains rest geometry. Bones, skin weights and clips remain in the native project.");
@@ -288,8 +305,7 @@ impl Document {
                     (&mut self.redo, &mut self.undo)
                 };
                 let previous = source.pop().ok_or("history is empty")?;
-                destination.push(self.mesh.clone());
-                self.mesh = previous;
+                destination.push(std::mem::replace(&mut self.mesh, previous));
                 self.transaction_preview = None;
                 self.revision += 1;
                 Ok(self.inspect())
@@ -411,6 +427,7 @@ impl Document {
                 | "select_related"
                 | "construction_define"
                 | "construction_apply"
+                | "regenerate_component"
         ) {
             return modeling::edit(&mut self.mesh, command, request).map(Some);
         }
@@ -425,6 +442,7 @@ impl Document {
                     | "texture_map_set"
                     | "texture_bake"
                     | "texture_normal_from_height"
+                    | "texture_bake_normals"
             )
         {
             return painting::edit(&mut self.mesh, command, request).map(Some);
@@ -539,7 +557,9 @@ impl Document {
             "object_separate_faces" => return cleanup::separate(&mut self.mesh, request).map(Some),
             "object_join" => return cleanup::join(&mut self.mesh, request).map(Some),
             "delete_faces" => return cleanup::delete_faces(&mut self.mesh, request).map(Some),
+            "uv_unwrap" | "uv_pack" => return atlas::edit(&mut self.mesh, request, command == "uv_pack").map(Some),
             "import_glb" => return glb::import(&mut self.mesh, request).map(Some),
+            "stretch_band" => return stretch::edit(&mut self.mesh, request).map(Some),
             "import_fbx" => return fbx_import::import(&mut self.mesh, request).map(Some),
             "move_in_view" => {
                 let camera = if let Some(id) = request.get("view_id") {

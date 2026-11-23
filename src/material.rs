@@ -30,14 +30,7 @@ impl Prepared {
     pub fn sample(&self, name: &str, uv: [f64; 2]) -> [f64; 3] {
         let index = crate::uv::texel_offset(self.width, self.height, uv);
         let pixels = &self.maps[name];
-        let alpha = if name == "base_color" && self.alpha_cutoff.is_none() {
-            f64::from(pixels[index + 3]) / 255.0
-        } else {
-            1.0
-        };
-        std::array::from_fn(|axis| {
-            (f64::from(pixels[index + axis]) * alpha + 128.0 * (1.0 - alpha)) / 255.0
-        })
+        std::array::from_fn(|axis| f64::from(pixels[index + axis]) / 255.0)
     }
 }
 
@@ -100,7 +93,9 @@ pub(super) fn shade(
     if dot(normal, view) < 0.0 {
         n = n.map(|value| -value);
     }
-    let ambient = 0.20 + 0.15 * (n[1] * 0.5 + 0.5);
+    let ambient = 0.06 + 0.18 * (n[1] * 0.5 + 0.5);
+    let overhead = (2.0 * dot(n, view) * n[1] - view[1]).max(0.0);
+    let environment = 0.04 + 0.35 * (overhead * overhead * (1.0 - roughness) + 0.35 * roughness);
     let mut diffuse = 0.0;
     let mut highlight = 0.0;
     let exponent = (2.0 / (roughness * roughness) - 2.0).clamp(2.0, 512.0);
@@ -118,10 +113,14 @@ pub(super) fn shade(
                 dot(n, halfway).max(0.0).powf(exponent) * weight * (0.5 + 1.5 * (1.0 - roughness));
         }
     }
-    std::array::from_fn(|axis| {
+    let linear: [f64; 3] = std::array::from_fn(|axis| {
         let f0 = specular[axis] * (1.0 - metallic) + base[axis] * metallic;
-        let linear = base[axis] * (ambient + (1.0 - metallic) * diffuse) + f0 * highlight;
-        ((linear / (linear + 0.65)).powf(1.0 / 2.2) * 255.0)
+        base[axis] * (1.0 - metallic) * (ambient + diffuse) + f0 * (highlight + environment)
+    });
+    let shoulder = (linear.into_iter().fold(0.0, f64::max) - 0.65).max(0.0);
+    let scale = 1.0 + shoulder * shoulder / (shoulder + 0.35);
+    linear.map(|channel| {
+        ((channel / scale).powf(1.0 / 2.2) * 255.0)
             .round()
             .clamp(0.0, 255.0) as u8
     })
