@@ -22,7 +22,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "\nDiscover commands: echo '{{\"command\":\"help\"}}' | mesh-cli --port 7879\nRead workflow: echo '{{\"command\":\"help\",\"topic\":\"workflow\"}}' | mesh-cli --port 7879"
         );
         println!(
-            "\nUse --batch --input FILE to run a JSON array of commands in order. Stops at the first error; earlier commands remain applied. Each reply is one JSON line. --output is unavailable with --batch."
+            "\nSend a JSON array to run commands in order. Use --batch to require an array. Stops at the first error; earlier commands remain applied. Each reply is one JSON line. --output is unavailable for arrays."
         );
         println!("\nLocal reconstruction commands: reference_guides (JSON/SVG) and visual_hull (outer volume estimate as project JSON/OBJ). Both take --input and --output, with no editor required.");
         println!("\nMesh sculpting: send JSON help with topic \"local-sculpting\" to an editor for move_vertices, sculpt_stroke, and local connectivity checks.");
@@ -136,7 +136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::io::stdin().read_to_string(&mut input)?;
     }
     let mut request: Value = serde_json::from_str(input.trim_start_matches('\u{feff}'))?;
-    if !batch {
+    if !batch && !request.is_array() {
         if feedback::is_command(&request) {
             if output.is_some() {
                 return Err("feedback commands write their replies to stdout; omit --output".into());

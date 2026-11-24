@@ -117,7 +117,7 @@ The inbox is shared across workspaces for the current OS user. It defaults to `%
 
 ## Batch commands
 
-Pass a JSON array of 1–1024 command objects with `--batch`. Read the array from stdin, a positional JSON argument, or a UTF-8 file. Update both the CLI and server to use single-request batching.
+Pass a JSON array of 1–1024 command objects through stdin, a positional JSON argument, or a UTF-8 file. The CLI detects arrays automatically. Use `--batch` to require array input. Update both the CLI and server to use single-request batching.
 
 ```powershell
 '[{"command":"workflow_status"},{"command":"query_mesh","kind":"objects"}]' | mesh-cli --port 7879 --batch
