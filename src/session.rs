@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub struct Session {
+    debug_session: bool,
     compress_recordings: bool,
     document: Document,
     root: PathBuf,
@@ -14,6 +15,7 @@ pub struct Session {
     events: Vec<Value>,
     state: Value,
     snapshot: usize,
+    command_id: usize,
     workspace: Option<PathBuf>,
     workflow: crate::workflow::Workflow,
 }
@@ -35,7 +37,7 @@ struct WorkspaceProject<'a> {
 
 impl Session {
     pub fn new(root: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::create(root, Document::default(), None, false)
+        Self::create(root, Document::default(), None, true, false)
     }
 
     pub fn open_workspace(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
@@ -43,6 +45,10 @@ impl Session {
     }
 
     pub fn open_with_recording_compression(path: PathBuf, compress_recordings: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::open_editor(path, true, compress_recordings)
+    }
+
+    pub fn open_editor(path: PathBuf, debug_session: bool, compress_recordings: bool) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&path)?;
         let workspace = fs::canonicalize(path)?;
         let project_path = workspace.join("project.json");
@@ -59,7 +65,7 @@ impl Session {
                 document.revision = revision;
             }
         }
-        let session = Self::create(workspace.join("sessions"), document, Some(workspace), compress_recordings)?;
+        let session = Self::create(workspace.join("sessions"), document, Some(workspace), debug_session, compress_recordings)?;
         session.write_workspace_project(project_path)?;
         Ok(session)
     }
@@ -68,6 +74,7 @@ impl Session {
         root: PathBuf,
         mut document: Document,
         workspace: Option<PathBuf>,
+        debug_session: bool,
         compress_recordings: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -76,6 +83,7 @@ impl Session {
         fs::create_dir_all(workspace.as_ref().unwrap_or(&root))?;
         let workflow = crate::workflow::Workflow::open(workspace.as_ref().unwrap_or(&root))?;
         let session = Self {
+            debug_session,
             compress_recordings,
             document,
             root,
@@ -83,15 +91,22 @@ impl Session {
             events: vec![],
             state,
             snapshot: 0,
+            command_id: 0,
             workspace,
             workflow,
         };
         session.workflow.save(session.workflow_directory())?;
-        fs::create_dir_all(session.directory().join("events"))?;
-        fs::create_dir_all(session.directory().join("states"))?;
-        session.write("states/0.json", &session.state)?;
-        session.write("index.json", &session.index())?;
+        if session.debug_session {
+            session.initialize_recording()?;
+            session.write("index.json", &session.index())?;
+        }
         Ok(session)
+    }
+
+    fn initialize_recording(&self) -> std::io::Result<()> {
+        fs::create_dir_all(self.directory().join("events"))?;
+        fs::create_dir_all(self.directory().join("states"))?;
+        self.write("states/0.json", &self.state)
     }
 
     fn directory(&self) -> PathBuf {
@@ -1086,7 +1101,8 @@ impl Session {
         } else {
             false
         };
-        let id = self.events.len() + 1;
+        self.command_id += 1;
+        let id = self.command_id;
         let mut full = match result {
             Ok(value) if value["status"] == "requirements_missing" => {
                 json!({"ok":false,"error":"requirements_missing","result":value})
@@ -1147,32 +1163,44 @@ impl Session {
                 output["result"] = responses::compact(result);
             }
         }
-        if state_changed {
-            self.snapshot = id;
-        }
-        output["trace"] = json!({"session":self.id,"event":id,"record":format!("/sessions/{}/events/{id}",self.id)});
-        let summary = json!({"id":id,"command":request["command"],"ok":full["ok"],"timestamp_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),"duration_ms":duration,"request_bytes":request.to_string().len(),"response_bytes":output.to_string().len(),"full_response_bytes":full.to_string().len(),"revision_before":before_revision,"revision_after":self.state["revision"],"changed":changed,"snapshot":self.snapshot});
-        self.events.push(summary);
-        let event = RecordedEvent {
-            summary: self.events.last().unwrap(),
-            input: &request,
-            output: &output,
-            full_output: &full,
-        };
+        let evidence = full["ok"] == true && matches!(request["command"].as_str(), Some("capture" | "compare_reference" | "review_run"));
         let mut project_saved = self.workspace.as_ref().filter(|_| state_changed).map(|_| false);
         let persistence = (|| -> std::io::Result<()> {
-            if state_changed {
-                self.write(&format!("states/{id}.json"), &self.state)?;
-            }
-            self.write(&format!("events/{id}.json"), &event)?;
             if state_changed && let Some(workspace) = &self.workspace {
                 self.write_workspace_project(workspace.join("project.json"))?;
                 project_saved = Some(true);
             }
-            self.write("index.json", &self.index())
+            if !self.debug_session && !evidence {
+                return Ok(());
+            }
+
+            if !self.debug_session && self.events.is_empty() {
+                self.initialize_recording()?;
+            } else if state_changed || !self.debug_session {
+                self.write(&format!("states/{id}.json"), &self.state)?;
+                self.snapshot = id;
+            }
+
+            let trace = json!({"session":self.id,"event":id,"record":format!("/sessions/{}/events/{id}",self.id)});
+            output["trace"] = trace;
+            let summary = json!({"id":id,"command":request["command"],"ok":full["ok"],"timestamp_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),"duration_ms":duration,"request_bytes":request.to_string().len(),"response_bytes":output.to_string().len(),"full_response_bytes":full.to_string().len(),"revision_before":before_revision,"revision_after":self.state["revision"],"changed":changed,"snapshot":self.snapshot});
+            let event = RecordedEvent {
+                summary: &summary,
+                input: &request,
+                output: &output,
+                full_output: &full,
+            };
+            self.write(&format!("events/{id}.json"), &event)?;
+            self.events.push(summary);
+            if let Err(error) = self.write("index.json", &self.index()) {
+                self.events.pop();
+                return Err(error);
+            }
+            Ok(())
         })();
         if let Err(error) = persistence {
             output.as_object_mut().expect("reply is an object").remove("turn_handoff");
+            output.as_object_mut().unwrap().remove("trace");
             output["recording_error"] = json!(error.to_string());
             output["persistence"] = json!({
                 "revision": self.state["revision"],
@@ -1184,7 +1212,7 @@ impl Session {
     }
 
     pub fn read(&self, route: &str) -> Result<Value, String> {
-        let active = Some((self.id.as_str(), !self.events.is_empty()));
+        let active = (self.debug_session || !self.events.is_empty()).then_some((self.id.as_str(), !self.events.is_empty()));
         Self::read_recordings(&self.root, self.workspace(), active, route)
     }
 

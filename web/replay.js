@@ -83,12 +83,14 @@ export class SessionReplay {
 
     renderEvents() {
         const query = element('replay-search').value.toLowerCase();
-        const buttons = this.events.filter(event => JSON.stringify(event).toLowerCase().includes(query)).map(event => {
+        const buttons = this.events.flatMap((event, index) => {
+            if (!JSON.stringify(event).toLowerCase().includes(query)) { return []; }
+            const position = index + 1;
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = `${event.id}. ${event.command || 'Invalid request'}${event.ok ? '' : ' · FAILED'} · ${event.duration_ms.toFixed(1)} ms · ${event.response_bytes} B`;
-            button.setAttribute('aria-pressed', String(event.id === this.position));
-            button.addEventListener('click', () => { this.pause(); this.seek(event.id); });
+            button.setAttribute('aria-pressed', String(position === this.position));
+            button.addEventListener('click', () => { this.pause(); this.seek(position); });
             return button;
         });
         element('replay-events').replaceChildren(...buttons);
@@ -111,7 +113,7 @@ export class SessionReplay {
         const generation = ++this.generation;
         const event = events[position - 1];
         const sourceSession = event?.session ?? initialSession ?? session;
-        const sourceEvent = event?.source_event ?? position;
+        const sourceEvent = event?.source_event ?? event?.id ?? position;
         try {
             const [state, detail] = await Promise.all([
                 this.json(`/sessions/${sourceSession}/states/${event?.snapshot ?? 0}`),

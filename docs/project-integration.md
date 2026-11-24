@@ -8,12 +8,12 @@ Install the tools using the [README](../README.md#install). Keep the tool source
 | --- | --- | --- |
 | Rust model library | [`src/lib.rs`](../src/lib.rs) and feature modules under `src/` | Owns mesh geometry, UVs, textures, rigs, clips, and model history. Validates edits and computes queries, sampled poses, captures, and exports. |
 | Editor session | [`src/session.rs`](../src/session.rs) and [`src/workflow.rs`](../src/workflow.rs) | Runs commands against one model, owns workflow checks, saves native projects, and records command replies, snapshots, and artifacts. |
-| Server | [`src/server.rs`](../src/server.rs) and [`src/workspace_host.rs`](../src/workspace_host.rs) | Runs in editor mode for one locked workspace or in project viewer mode for a project root. Editor mode accepts JSON commands. Project viewer mode serves the web assets, saved model state, and replay history. |
+| Server | [`src/server.rs`](../src/server.rs) and [`src/workspace_host.rs`](../src/workspace_host.rs) | Runs in editor mode for one locked workspace or in project viewer mode for a project root. Editor mode accepts JSON commands. Project viewer mode serves the web assets and saved model state. |
 | CLI | [`src/cli.rs`](../src/cli.rs) | Reads JSON from arguments, files, or stdin, sends it to the selected server, and returns structured replies and exit status. Copies requested artifacts to local output paths. |
-| Browser viewer | [`web/`](../web/) | Reads saved state and replay records. Owns the viewport camera, projection, display modes, visibility filters, and playback controls. Stores view preferences in the browser and renders the model with WebGL. |
-| Tests | [`tests/`](../tests/) | Rust tests cover commands, persistence, captures, and exports. `viewer.mjs` covers browser rendering data, interaction, and replay. |
+| Browser viewer | [`web/`](../web/) | Reads saved state. Owns the viewport camera, projection, display modes, visibility filters, and animation controls. Stores view preferences in the browser and renders the model with WebGL. |
+| Tests | [`tests/`](../tests/) | Rust tests cover commands, persistence, captures, and exports. `viewer.mjs` covers browser rendering data and interaction. |
 
-An agent sends a JSON command through `mesh-cli` to an editor port. The editor validates the command, updates its model, and saves the resulting revision. The project viewer reads that saved revision on its own port. During replay it displays recorded snapshots, then returns to the latest saved state when the user exits replay.
+An agent sends a JSON command through `atk-mesh-cli` to an editor port. The editor validates the command, updates its model, and saves the resulting revision. The project viewer reads that saved revision on its own port. Use `atk-mesh-cli --debug` to record a session and `atk-mesh-cli --replay FILE` to inspect it.
 
 ### Where new features belong
 
@@ -28,18 +28,18 @@ An agent sends a JSON command through `mesh-cli` to an editor port. The editor v
 From your project root:
 
 ```powershell
-mesh-server --port 7878
+atk-mesh --port 7878
 ```
 
-The viewer uses its working directory as the project root. Pass `--project ROOT` to choose another root. Open http://127.0.0.1:7878 in your browser. Click the folder button or press Ctrl+P to search for a workspace. Use the arrow keys and Enter to select a result. Each tab shows the latest saved revision of its selected mesh and can replay its recorded commands.
+The viewer uses its working directory as the project root. Pass `--project ROOT` to choose another root. Open http://127.0.0.1:7878 in your browser. Click the folder button or press Ctrl+P to search for a workspace. Use the arrow keys and Enter to select a result. Each tab shows the latest saved revision of its selected mesh.
 
-List discovered meshes with `mesh-cli --port 7878 --list-workspaces`. To edit a mesh, start a separate editor in another terminal. A new workspace starts empty with pending modeling requirements.
+List discovered meshes with `atk-mesh-cli --port 7878 --list-workspaces`. To edit a mesh, start a separate editor in another terminal. A new workspace starts empty with pending modeling requirements.
 
 ```powershell
-mesh-server --workspace .mesh/model --port 7879
+atk-mesh --workspace .mesh/model --port 7879
 ```
 
-Send commands to port 7879 for this mesh. Give each additional editor its own workspace and port so the processes can edit in parallel. Each editor locks its workspace for the duration of the process. Use Ctrl+C to stop an editor. The project viewer can still show its saved mesh and replay.
+Send commands to port 7879 for this mesh. Give each additional editor its own workspace and port so the processes can edit in parallel. Each editor locks its workspace for the duration of the process. Use Ctrl+C to stop an editor. The project viewer can still show its saved mesh.
 
 The project viewer prints its browser URL. Each editor prints the address of its JSON API. The former `--headless` flag is accepted for compatibility.
 
@@ -52,11 +52,11 @@ Add this section to the consuming project's `AGENTS.md`, adjusting the directory
 ```markdown
 ## Mesh editing
 
-- Use the installed `mesh-server` and `mesh-cli` tools for modeling.
-- Use the read-only project viewer on port 7878. Discover meshes with `mesh-cli --port 7878 --list-workspaces`.
+- Use the installed `atk-mesh` and `atk-mesh-cli` tools for modeling.
+- Use the read-only project viewer on port 7878. Discover meshes with `atk-mesh-cli --port 7878 --list-workspaces`.
 - Reuse an editor for the intended mesh if one is running. Otherwise, start
-  `mesh-server --workspace PATH --port PORT` with a free port.
-- Send commands to that editor via `mesh-cli --port PORT`. Use `mesh-cli --port PORT --batch --input FILE` for a prepared JSON array. The batch uses one CLI invocation and one HTTP request. Split the sequence where a later command needs a returned ID, revision, or review result.
+  `atk-mesh --workspace PATH --port PORT` with a free port.
+- Send commands to that editor via `atk-mesh-cli --port PORT`. Use `atk-mesh-cli --port PORT --batch --input FILE` for a prepared JSON array. The batch uses one CLI invocation and one HTTP request. Split the sequence where a later command needs a returned ID, revision, or review result.
 - Discover the tool with `help`, then read `help` with `topic:"workflow"`.
   Read `topic:"command-api"` for commands; continue topic pages using `next_offset`.
 - Begin with `workflow_status`, then `query_mesh` to identify current objects and IDs.
@@ -79,27 +79,27 @@ Add this section to the consuming project's `AGENTS.md`, adjusting the directory
 The command reference is in the tool's [README](../README.md#modeling-requirements). Codex can inspect objects and their vertices:
 
 ```powershell
-'{"command":"query_mesh","kind":"objects"}' | mesh-cli --port 7879
-'{"command":"query_mesh","kind":"vertices","object":1}' | mesh-cli --port 7879
+'{"command":"query_mesh","kind":"objects"}' | atk-mesh-cli --port 7879
+'{"command":"query_mesh","kind":"vertices","object":1}' | atk-mesh-cli --port 7879
 ```
 
 Object `1` is illustrative; use the actual returned ID. Add `revision` to editing requests when you need to reject edits against a changed document.
 
 ## Input, output and errors
 
-`mesh-cli` accepts a single JSON argument, piped stdin, or a command file:
+`atk-mesh-cli` accepts a single JSON argument, piped stdin, or a command file:
 
 ```powershell
-mesh-cli --port 7879 --input commands/capture.json --output preview.png
-'{"command":"save"}' | mesh-cli --port 7879 --output geometry.json
-'{"command":"export"}' | mesh-cli --port 7879 --output model.fbx
+atk-mesh-cli --port 7879 --input commands/capture.json --output preview.png
+'{"command":"save"}' | atk-mesh-cli --port 7879 --output geometry.json
+'{"command":"export"}' | atk-mesh-cli --port 7879 --output model.fbx
 ```
 
-The capture file contains one JSON object such as `{"command":"capture","yaw":35,"pitch":25}`. UTF-8 files with or without a BOM are supported. `--input -` or a positional `-` explicitly reads stdin. The legacy `mesh-cli JSON OUTPUT` form remains supported. Relative command and output paths resolve from the client's working directory. Create destination directories before saving.
+The capture file contains one JSON object such as `{"command":"capture","yaw":35,"pitch":25}`. UTF-8 files with or without a BOM are supported. `--input -` or a positional `-` explicitly reads stdin. The legacy `atk-mesh-cli JSON OUTPUT` form remains supported. Relative command and output paths resolve from the client's working directory. Create destination directories before saving.
 
-Use `mesh-cli --port 7879 --batch --input commands/recipe.json` for a JSON array of 1–1024 commands. Piped stdin works with `--batch` too. The editor runs the array in order in one request and stops at the first failed command. Earlier edits remain applied. Read stdout as one JSON reply per attempted command, including a failed reply when present. Use the artifact paths in those replies for batch captures and saves. Use `--output` with a single command. Direct HTTP clients can post the same array to the editor's `/command` endpoint and read the ordered `replies` array. See the [command API](../README.md#command-api) for the HTTP response format.
+Use `atk-mesh-cli --port 7879 --batch --input commands/recipe.json` for a JSON array of 1–1024 commands. Piped stdin works with `--batch` too. The editor runs the array in order in one request and stops at the first failed command. Earlier edits remain applied. Read stdout as one JSON reply per attempted command, including a failed reply when present. Use the artifact paths in those replies for batch captures and saves. Use `--output` with a single command. Direct HTTP clients can post the same array to the editor's `/command` endpoint and read the ordered `replies` array. See the [command API](../README.md#command-api) for the HTTP response format.
 
-Port selection is `--port`, then `MESH_PORT`, then 7878. Ports must be 1–65535. `mesh-server --help` and `mesh-cli --help` describe their options; `--version` reports the installed version.
+Port selection is `--port`, then `MESH_PORT`, then 7878. Ports must be 1–65535. `atk-mesh --help` and `atk-mesh-cli --help` describe their options; `--version` reports the installed version.
 
 Successful commands exit with status 0 and print a JSON response on stdout. Failed server commands exit with status 1 and still print their JSON response, including workflow requirements and trace information, even when an output file was requested. Input, connection and local output failures exit with status 1 and write diagnostics to stderr; these failures may have no JSON response. A failed server command does not write the requested output file. An output copy failure can occur after the server has successfully executed and recorded a command, so inspect the result before retrying an edit.
 
@@ -112,7 +112,7 @@ import json
 import subprocess
 
 process = subprocess.run(
-    ["mesh-cli", "--port", "7879"],
+    ["atk-mesh-cli", "--port", "7879"],
     input=json.dumps({"command": "workflow_status"}),
     text=True,
     capture_output=True,
@@ -145,12 +145,12 @@ if (!response.ok || reply.ok !== true) {
 console.log(reply);
 ```
 
-This is an alternative transport to the same server; workflow gates, recordings and artifact paths still apply. Direct HTTP callers receive artifact paths and must copy files themselves when needed. A cold-start run on one Windows host observed new shell/child-process launches failing with Access denied / EPERM after server launch; that observation does not establish a mesh-server defect or its cause. No fix or general diagnosis is claimed here.
+This is an alternative transport to the same server; workflow gates, recordings and artifact paths still apply. Direct HTTP callers receive artifact paths and must copy files themselves when needed. A cold-start run on one Windows host observed new shell/child-process launches failing with Access denied / EPERM after server launch; that observation does not establish a atk-mesh defect or its cause. No fix or general diagnosis is claimed here.
 
 Each editor handles requests sequentially for its own mesh. The project viewer reads saved revisions independently. Workflow checkpoints require visual review. See the README for topology, rendering, import and export limitations.
 
 For tool development, run `cargo test --locked` and `npm test` in the tool checkout. The Rust CLI integration tests start an isolated server and temporary workspace. Legacy Python smoke scripts can replace the active model, so run them only against a disposable workspace on a separate port.
 
-For large assets, start the editor with `--compress-recordings` to store new replay states and events as gzip JSON. The project and session index stay directly readable. The current CLI and project viewer resolve either encoding on the usual replay routes. Use an updated viewer to read compressed sessions.
+Start the editor with `--debug` to record all commands and replay snapshots as gzip JSON, regardless of build profile. Ordinary edits save to the project with no replay recording by default. Capture, comparison and review evidence still has trace records. The project and session index remain plain JSON. Existing gzip and plain JSON recordings are readable on the same replay routes. `--compress-recordings` is accepted as an alias for `--debug`.
 
 Run `cargo run --release --locked --example bench_dense -- NEW_DIRECTORY 100000` to time workspace open, a sculpt stroke, capture, undo, save and reopen on a triangular grid. Use `1000000` for the larger fixture and append `--compress-recordings` for a storage comparison. Each run creates a fresh directory and prints elapsed milliseconds and cumulative on-disk bytes.

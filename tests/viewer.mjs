@@ -150,10 +150,12 @@ function browserEnvironment() {
             this.textContent = '';
             this.value = '';
             this.children = [];
+            this.attributes = new Map();
         }
         getContext() { return gl; }
-        setAttribute() {}
-        removeAttribute() {}
+        setAttribute(name, value) { this.attributes.set(name, String(value)); }
+        getAttribute(name) { return this.attributes.get(name) ?? null; }
+        removeAttribute(name) { this.attributes.delete(name); }
         showModal() { this.open = true; }
         close() { this.open = false; }
         focus() {}
@@ -198,6 +200,45 @@ function browserEnvironment() {
         }
     };
 }
+
+test('camera gizmo keeps opposite axes selectable and switches projection independently', async () => {
+    const environment = browserEnvironment();
+    const element = id => environment.document.getElementById(id);
+    environment.replace('fetch', async () => ({
+        ok: true,
+        json: async () => ({ ok: true, result: { mode: 'viewer', workspaces: [] } })
+    }));
+    const axes = ['right', 'left', 'top', 'bottom', 'front', 'back'].map(axis => element(`camera-${axis}`));
+    try {
+        await import('../web/app.js?camera-gizmo');
+        element('orthographic').dispatchEvent(new Event('click'));
+        assert.equal(element('orthographic').getAttribute('aria-pressed'), 'true');
+        assert.equal(element('perspective').getAttribute('aria-pressed'), 'false');
+
+        for (const axis of axes) {
+            axis.dispatchEvent(new Event('click'));
+            assert.deepEqual(axes.filter(button => button.getAttribute('aria-pressed') === 'true'), [axis]);
+            const positions = axes.map(button =>
+                [...button.getAttribute('style').matchAll(/\+ (-?[\d.e+-]+)px/g)].map(match => Number(match[1]))
+            );
+            positions.forEach(([x, y], index) => {
+                assert.ok(Math.abs(x) <= 56 && Math.abs(y) <= 56, 'axis button fits the gizmo');
+                for (const [otherX, otherY] of positions.slice(index + 1)) {
+                    assert.ok(Math.hypot(x - otherX, y - otherY) >= 33, 'axis buttons leave a clear hit area');
+                }
+            });
+        }
+
+        assert.equal(element('orthographic').getAttribute('aria-pressed'), 'true');
+        element('perspective').dispatchEvent(new Event('click'));
+        assert.equal(element('perspective').getAttribute('aria-pressed'), 'true');
+        assert.equal(element('orthographic').getAttribute('aria-pressed'), 'false');
+        assert.equal(axes.at(-1).getAttribute('aria-pressed'), 'true');
+    } finally {
+        environment.window.dispatchEvent(new Event('pagehide'));
+        environment.restore();
+    }
+});
 
 test('visibility filters surface and wireframe draws without GPU uploads or mesh mutation', () => {
     const environment = browserEnvironment();
@@ -533,7 +574,7 @@ test('viewer polls read-only state, applies edits, skips selection-only uploads 
 });
 
 
-test('project viewer scopes selection and replay and polls saved revisions without writing', async () => {
+test('project viewer scopes selection and polls saved revisions without writing', async () => {
     const environment = browserEnvironment();
     const url = new URL('http://localhost/?workspace=models%2Ffin');
     const timers = new Map();
@@ -570,22 +611,12 @@ test('project viewer scopes selection and replay and polls saved revisions witho
                 data.result = { revision: savedRevision, mesh };
                 return { status: 200, headers, json: async () => data };
             }
-            case '/sessions?workspace=models%2Ffin':
-                data = { current: '1000000-1', sessions: ['1000000-1'] };
-                break;
-            case '/sessions/1000000-1?workspace=models%2Ffin':
-                data = { events: [] };
-                break;
-            case '/sessions/1000000-1/states/0?workspace=models%2Ffin':
-                data = { revision: 2, mesh };
-                break;
             default:
                 assert.fail(`unexpected request ${path}`);
         }
         return { ok: true, json: async () => data };
     });
     const element = id => environment.document.getElementById(id);
-    element('replay-panel').hidden = true;
     const tick = async () => {
         const [id, timer] = [...timers.entries()].find(([, timer]) => timer.delay === 400);
         timers.delete(id);
@@ -616,21 +647,6 @@ test('project viewer scopes selection and replay and polls saved revisions witho
         assert.equal(destination.searchParams.get('workspace'), 'models/nose');
         picker.close();
 
-        element('replay-open').dispatchEvent(new Event('click'));
-        await new Promise(setImmediate);
-        assert.equal(element('revision').textContent, 'rev 2');
-        assert.match(element('replay-download').href, /\?workspace=models%2Ffin$/);
-
-        element('objects-open').dispatchEvent(new Event('click'));
-        assert.equal(element('replay-panel').hidden, true);
-        assert.equal(element('return-to-latest').hidden, false);
-        await tick();
-        assert.equal(element('revision').textContent, 'rev 2');
-        element('return-to-latest').dispatchEvent(new Event('click'));
-        await tick();
-        assert.equal(element('return-to-latest').hidden, true);
-        assert.equal(element('revision').textContent, 'rev 7');
-        assert.equal(savedReads, 2, 'returning from replay reloads the displayed state');
         savedRevision = 8;
         await tick();
         assert.equal(element('revision').textContent, 'rev 8');

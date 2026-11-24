@@ -7,7 +7,7 @@ use std::process::Command;
 fn invoke(root: &Path, request: Value, output: &str) -> Value {
     let input = root.join("request.json");
     std::fs::write(&input, request.to_string()).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_mesh-cli"))
+    let result = Command::new(env!("CARGO_BIN_EXE_atk-mesh-cli"))
         .current_dir(root)
         .env("MESH_PORT", "invalid")
         .arg("--input")

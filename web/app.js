@@ -1,5 +1,4 @@
 import { ModelViewer } from './renderer.js';
-import { SessionReplay } from './replay.js';
 import { ObjectInspector } from './objects.js';
 import { createAnimationSampler } from './animation.js';
 
@@ -13,7 +12,6 @@ let timer = null;
 let stopped = false;
 let controller = null;
 let graphicsError = null;
-let replay = null;
 let inspector = null;
 let workspace = null;
 let savedViewerSnapshot = null;
@@ -28,6 +26,35 @@ let clipHighlight = -1;
 let viewerMode = 'mesh';
 const renderModes = { mesh: 'shaded', animation: 'vertex_color_shaded' };
 const rigDisplay = { bones: false, hierarchy: false, joints: false, mesh: true };
+
+function separateAxisEndpoints(endpoints) {
+    // Keep the 26 px targets and their focus outlines clear of each other.
+    const spacing = 34;
+    for (let pass = 0; pass < 12; pass++) {
+        let separated = true;
+        for (let first = 0; first < endpoints.length; first++) {
+            const a = endpoints[first];
+            for (let second = first + 1; second < endpoints.length; second++) {
+                const b = endpoints[second];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const distance = Math.hypot(dx, dy);
+                if (distance >= spacing - 0.01) { continue; }
+
+                const adjustment = (spacing - distance) / 2;
+                const x = distance > 0.01 ? dx / distance : 1;
+                const y = distance > 0.01 ? dy / distance : 0;
+                a.x -= x * adjustment;
+                a.y -= y * adjustment;
+                b.x += x * adjustment;
+                b.y += y * adjustment;
+                separated = false;
+            }
+        }
+        if (separated) { break; }
+    }
+}
+
 function setupCameraGizmo() {
     const directions = [
         ['right', 'axis-x', [1, 0, 0], Math.PI / 2, 0],
@@ -61,13 +88,13 @@ function setupCameraGizmo() {
         const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
         const up = [-Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), -Math.cos(yaw) * Math.sin(pitch)];
         const facing = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
-        for (const { button, line, color, direction } of axes) {
+        const endpoints = axes.map(axis => {
+            const { direction } = axis;
             const project = basis => basis.reduce((sum, value, index) => sum + value * direction[index], 0);
-            const depth = project(facing);
-            let x = 40 * project(right);
-            const y = -40 * project(up);
-            // Separate coincident endpoints when an axis points toward the camera.
-            x += Math.sign(depth) * Math.max(0, 14 - Math.hypot(x, y));
+            return { ...axis, depth: project(facing), x: 46 * project(right), y: -46 * project(up) };
+        });
+        separateAxisEndpoints(endpoints);
+        for (const { button, line, color, depth, x, y } of endpoints) {
             const rear = depth < -0.0001 ? ' rear' : '';
             button.className = `camera-axis ${color}${rear}`;
             line.className = `camera-axis-line ${color}${rear}`;
@@ -77,20 +104,21 @@ function setupCameraGizmo() {
         }
     }
 
-    element('orthographic').addEventListener('click', () => {
-        viewer.setOrthographic(!viewer.orthographic);
-        syncProjectionButton();
-    });
+    for (const [projection, orthographic] of [['perspective', false], ['orthographic', true]]) {
+        element(projection).addEventListener('click', () => {
+            viewer.setOrthographic(orthographic);
+            syncProjectionButtons();
+        });
+    }
+    syncProjectionButtons();
     updateAxes();
     return updateAxes;
 }
 
-function syncProjectionButton() {
-    const button = element('orthographic');
+function syncProjectionButtons() {
     const { orthographic } = viewer;
-    button.textContent = orthographic ? 'Orthographic' : 'Perspective';
-    button.title = orthographic ? 'Switch to perspective projection' : 'Switch to orthographic projection';
-    button.setAttribute('aria-pressed', String(orthographic));
+    element('perspective').setAttribute('aria-pressed', String(!orthographic));
+    element('orthographic').setAttribute('aria-pressed', String(orthographic));
 }
 
 function viewerSnapshot() {
@@ -109,7 +137,7 @@ function viewerSnapshot() {
 }
 
 function saveWorkspaceView() {
-    if (workspace === null || savedViewerSnapshot === null || replay.active === true) { return; }
+    if (workspace === null || savedViewerSnapshot === null) { return; }
 
     const snapshot = viewerSnapshot();
     if (snapshot === savedViewerSnapshot) { return; }
@@ -132,7 +160,7 @@ function restoreWorkspaceView() {
     if (state === null || typeof state !== 'object') { return; }
 
     viewer.restoreCamera(state.camera);
-    syncProjectionButton();
+    syncProjectionButtons();
     for (const name of ['grid', 'turntable']) {
         if (typeof state[name] !== 'boolean') { continue; }
 
@@ -375,7 +403,6 @@ async function discoverWorkspaces(options) {
     const data = await readJson('/workspaces', options);
     workspaceMode = data.result.mode;
     const projectViewer = workspaceMode === 'viewer';
-    replay.workspaceQuery = projectViewer ? workspaceQuery : '';
     element('workspace-open').hidden = !projectViewer;
     if (projectViewer === false) { return; }
 
@@ -495,7 +522,7 @@ async function refresh() {
         if (workspaceMode === 'viewer') {
             const metadata = await readJson('/state/meta' + query, options);
             if (stopped === true) { return; }
-            if (replay.active === true || (savedStateTag !== null && metadata.result.tag === savedStateTag)) {
+            if (savedStateTag !== null && metadata.result.tag === savedStateTag) {
                 setConnection(true);
                 element('notice').hidden = graphicsError === null;
                 return;
@@ -514,7 +541,6 @@ async function refresh() {
         if (stopped === true) { return; }
 
         element('objects-open').disabled = false;
-        element('replay-open').disabled = false;
         let restoreView = false;
         if (typeof data.workspace === 'string') {
             if (workspace !== data.workspace) {
@@ -531,15 +557,13 @@ async function refresh() {
                 element('workspace-path').title = path;
             }
         }
-        if (replay.active === false) {
-            element('model-name').textContent = workspaceMode === 'viewer' ? 'Saved model' : 'Live model';
-            showState(data.result);
-            if (restoreView === true) {
-                restoreWorkspaceView();
-                savedViewerSnapshot = viewerSnapshot();
-            }
-            savedStateTag = response.headers?.get('ETag') ?? null;
+        element('model-name').textContent = workspaceMode === 'viewer' ? 'Saved model' : 'Live model';
+        showState(data.result);
+        if (restoreView === true) {
+            restoreWorkspaceView();
+            savedViewerSnapshot = viewerSnapshot();
         }
+        savedStateTag = response.headers?.get('ETag') ?? null;
         if (graphicsError !== null) { element('notice').textContent = graphicsError; }
         setConnection(true);
         element('notice').hidden = graphicsError === null;
@@ -570,10 +594,6 @@ function initialize() {
         document.querySelectorAll('button').forEach(button => { button.disabled = true; });
         return;
     }
-    element('replay-open').addEventListener('click', saveWorkspaceView);
-    replay = new SessionReplay(showState, () => {
-        savedStateTag = null;
-    });
     inspector = new ObjectInspector(viewer);
     const updateCameraGizmo = setupCameraGizmo();
     viewer.onAnimationFrame = seconds => {
@@ -638,17 +658,12 @@ function initialize() {
     });
     const settings = element('viewer-settings');
     const settingsButton = element('settings-button');
-    for (const panel of ['objects', 'replay']) {
-        element(`${panel}-open`).addEventListener('click', () => {
-            if (panel === 'objects') { replay.hide(); }
-            else { inspector.setOpen(false); }
-
-            settings.open = false;
-            const focusTarget = element(`${panel}-panel`).hidden ? settingsButton : element(`${panel}-close`);
-            focusTarget.focus();
-        });
-        element(`${panel}-close`).addEventListener('click', () => settingsButton.focus());
-    }
+    element('objects-open').addEventListener('click', () => {
+        settings.open = false;
+        const focusTarget = element('objects-panel').hidden ? settingsButton : element('objects-close');
+        focusTarget.focus();
+    });
+    element('objects-close').addEventListener('click', () => settingsButton.focus());
     for (const name of ['grid', 'turntable']) {
         element(name).addEventListener('click', () => {
             viewer[name] = viewer[name] === false;
@@ -709,7 +724,6 @@ function initialize() {
         stopped = true;
         clearTimeout(timer);
         controller?.abort();
-        replay.dispose();
         inspector.dispose();
         viewer.dispose();
     });

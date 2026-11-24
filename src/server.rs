@@ -12,17 +12,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "mesh-server [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; default 7878)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nUse a distinct port for the project viewer and each editor. Stop with Ctrl+C."
+            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; default 7878)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nUse a distinct port for the project viewer and each editor. Stop with Ctrl+C."
         );
         println!(
-            "\nList meshes: mesh-cli --port 7878 --list-workspaces\nStart an editor: mesh-server --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
+            "\nList meshes: atk-mesh-cli --port 7878 --list-workspaces\nStart an editor: atk-mesh --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | atk-mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
         );
-        println!("Editor storage: add --compress-recordings to gzip new replay events and snapshots.");
+        println!("Use atk-mesh-cli --debug to record a command timeline. The editor's --debug flag retains full server traces for query_record and timeout recovery.");
         return Ok(());
     }
 
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--version" | "-V") {
-        println!("mesh-server {}", env!("CARGO_PKG_VERSION"));
+        println!("atk-mesh {}", env!("CARGO_PKG_VERSION"));
         println!("Features: batch, empty-workspaces, masters-only-uv, preview-reuse, camera-only-reviews");
         return Ok(());
     }
@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut project = None;
     let mut port = None;
     let mut headless = false;
+    let mut debug_session = false;
     let mut compress_recordings = false;
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
@@ -38,6 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--workspace" => &mut workspace,
             "--project" => &mut project,
             "--port" => &mut port,
+            "--debug" => {
+                debug_session = true;
+                continue;
+            }
             "--compress-recordings" => {
                 compress_recordings = true;
                 continue;
@@ -71,6 +76,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if workspace.is_some() && project.is_some() {
         return Err("A viewer root and --workspace are mutually exclusive".into());
     }
+    if debug_session && workspace.is_none() {
+        return Err("--debug requires a workspace editor".into());
+    }
     if compress_recordings && workspace.is_none() {
         return Err("--compress-recordings requires a workspace editor".into());
     }
@@ -84,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     let mut host = if let Some(workspace) = workspace {
-        WorkspaceHost::open_editor(PathBuf::from(workspace), compress_recordings)?
+        WorkspaceHost::open_editor(PathBuf::from(workspace), debug_session || compress_recordings, true)?
     } else {
         let root = project.as_deref().unwrap_or(".");
         WorkspaceHost::open_viewer(Path::new(root))?
@@ -92,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("http://127.0.0.1:{port}");
     if matches!(&host, WorkspaceHost::Viewer { .. }) {
         println!("Project viewer: {url}");
-        println!("List meshes: mesh-cli --port {port} --list-workspaces");
+        println!("List meshes: atk-mesh-cli --port {port} --list-workspaces");
     } else {
         println!("Mesh editor API: {url}");
     }
@@ -220,7 +228,6 @@ fn viewer_asset(path: &str) -> (u16, &'static str, String) {
         "/renderer.js" => ("text/javascript", include_str!("../web/renderer.js")),
         "/geometry.js" => ("text/javascript", include_str!("../web/geometry.js")),
         "/animation.js" => ("text/javascript", include_str!("../web/animation.js")),
-        "/replay.js" => ("text/javascript", include_str!("../web/replay.js")),
         "/objects.js" => ("text/javascript", include_str!("../web/objects.js")),
         "/viewer.css" => ("text/css", include_str!("../web/viewer.css")),
         _ => return (404, "text/plain", "Not found".into()),
@@ -231,7 +238,7 @@ fn viewer_asset(path: &str) -> (u16, &'static str, String) {
 fn is_workspace_route(method: &str, path: &str) -> bool {
     match method {
         "GET" => path == "/sessions" || path.starts_with("/sessions/"),
-        "POST" => path == "/command",
+        "POST" => matches!(path, "/command" | "/command/debug"),
         _ => false,
     }
 }
@@ -244,12 +251,13 @@ fn workspace_route(
 ) -> Result<(u16, Value), String> {
     let workspace = parse_workspace_query(query)?;
     let workspace = workspace.as_deref();
-    if path == "/command" {
+    if matches!(path, "/command" | "/command/debug") {
         let session = host.editor(workspace)?;
+        let snapshots = path == "/command/debug";
         let request = serde_json::from_slice::<Value>(body).map_err(|error| error.to_string())?;
         let output = match request {
-            Value::Array(commands) => execute_batch(session, commands),
-            value => session.execute(value),
+            Value::Array(commands) => execute_batch(session, commands, snapshots),
+            value => execute_command(session, value, snapshots),
         };
         let status = if output["ok"] == true { 200 } else { 400 };
         return Ok((status, output));
@@ -295,7 +303,15 @@ fn parse_workspace_query(query: &str) -> Result<Option<String>, String> {
         .map_err(|_| "workspace path must be UTF-8".into())
 }
 
-fn execute_batch(session: &mut Session, commands: Vec<Value>) -> Value {
+fn execute_command(session: &mut Session, command: Value, snapshot: bool) -> Value {
+    let mut reply = session.execute(command);
+    if snapshot {
+        reply["debug_state"] = session.state();
+    }
+    reply
+}
+
+fn execute_batch(session: &mut Session, commands: Vec<Value>, snapshots: bool) -> Value {
     if commands.is_empty() || commands.len() > 1024 {
         return json!({"ok":false,"error":"batch input must be a JSON array of 1..1024 commands","replies":[]});
     }
@@ -316,7 +332,7 @@ fn execute_batch(session: &mut Session, commands: Vec<Value>) -> Value {
 
     let mut replies = Vec::with_capacity(commands.len());
     for command in commands {
-        let reply = session.execute(command);
+        let reply = execute_command(session, command, snapshots);
         let failed = reply["ok"] != true || reply["recording_error"].is_string();
         replies.push(reply);
         if failed {

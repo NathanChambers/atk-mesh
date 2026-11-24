@@ -1,6 +1,6 @@
 # Image reconstruction
 
-Run each command with `mesh-cli --input request.json --output FILE`. These commands run locally without an editor. They use the same camera fields as `capture`. Match the camera's width and height to the source image and keep all cameras in the same world coordinate system.
+Run each command with `atk-mesh-cli --input request.json --output FILE`. These commands run locally without an editor. They use the same camera fields as `capture`. Match the camera's width and height to the source image and keep all cameras in the same world coordinate system.
 
 ## Reference guides
 

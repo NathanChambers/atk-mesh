@@ -8,8 +8,8 @@ Install both executables from this source directory with a current stable Rust t
 
 ```powershell
 cargo install --path . --locked --target-dir target/install
-mesh-server --version
-mesh-cli --help
+atk-mesh --version
+atk-mesh-cli --help
 ```
 
 Cargo installs them into your Cargo bin directory (usually `~/.cargo/bin`); ensure that directory is on `PATH`. Node and Python are not needed to run the installed tool. The viewer is embedded in the server executable, so the source checkout is not needed at runtime. Rerun the install command after updating the source.
@@ -19,25 +19,25 @@ The separate install build directory avoids overwriting binaries running from `t
 Start the read-only viewer from the project root. Use `--project ROOT` to select a different root.
 
 ```powershell
-mesh-server --port 7878
+atk-mesh --port 7878
 ```
 
-Open http://127.0.0.1:7878 in your browser. Click the folder icon or press Ctrl+P to search for a mesh workspace. You can also list the discovered directories with `mesh-cli --port 7878 --list-workspaces`.
+Open http://127.0.0.1:7878 in your browser. Click the folder icon or press Ctrl+P to search for a mesh workspace. You can also list the discovered directories with `atk-mesh-cli --port 7878 --list-workspaces`.
 
 To edit a mesh, start an API-only editor for its workspace on a different port. The editor creates the workspace if needed and always runs without launching or serving the browser UI.
 
 ```powershell
-mesh-server --workspace .mesh/model --port 7879
+atk-mesh --workspace .mesh/model --port 7879
 ```
 
 Send commands to that editor from another terminal.
 
 ```powershell
-'{"command":"help"}' | mesh-cli --port 7879
-'{"command":"help","topic":"workflow"}' | mesh-cli --port 7879
-'{"command":"workflow_status"}' | mesh-cli --port 7879
-'{"command":"query_mesh","kind":"objects"}' | mesh-cli --port 7879
-'{"command":"capture","yaw":35,"pitch":25}' | mesh-cli --port 7879 --output preview.png
+'{"command":"help"}' | atk-mesh-cli --port 7879
+'{"command":"help","topic":"workflow"}' | atk-mesh-cli --port 7879
+'{"command":"workflow_status"}' | atk-mesh-cli --port 7879
+'{"command":"query_mesh","kind":"objects"}' | atk-mesh-cli --port 7879
+'{"command":"capture","yaw":35,"pitch":25}' | atk-mesh-cli --port 7879 --output preview.png
 ```
 
 The editor's port selects the mesh for every command or batch. Run each additional editor on its own port to work on multiple meshes in parallel. Each workspace allows one editor at a time.
@@ -71,18 +71,18 @@ A native workspace can store a bone hierarchy, per-vertex skin weights, and name
 - For still images, pass `clip` and `time` in seconds to `capture`. All camera, visibility and render mode options apply. Looping clips wrap the time and one-shot clips clamp it. The reply reports the requested and sampled times under `animation`. Pose captures render a temporary mesh and return artifacts without creating a modeling selection view.
 
 ```powershell
-'{"command":"capture","clip":"Squat","time":1.8,"yaw":40,"pitch":5,"center":[0,0.75,0],"zoom":320}' | mesh-cli --port 7879 --output squat.png
-'{"command":"animation_sample","clip":"Squat","time":1.8,"bones":["Foot.L","Foot.R"]}' | mesh-cli --port 7879
-'{"command":"export","format":"glb"}' | mesh-cli --port 7879 --output character.glb
+'{"command":"capture","clip":"Squat","time":1.8,"yaw":40,"pitch":5,"center":[0,0.75,0],"zoom":320}' | atk-mesh-cli --port 7879 --output squat.png
+'{"command":"animation_sample","clip":"Squat","time":1.8,"bones":["Foot.L","Foot.R"]}' | atk-mesh-cli --port 7879
+'{"command":"export","format":"glb"}' | atk-mesh-cli --port 7879 --output character.glb
 ```
 
 ## Project workspaces
 
 The server discovers mesh directories recursively from the project root. A workspace contains a native `project.json` and normally has `workflow.json`, `resources/`, and `sessions/` alongside it. Discovery skips linked directories, `.git`, `.svn`, `node_modules`, `target`, `Library`, and the resources and sessions inside known workspaces.
 
-Each browser tab has its own mesh selection. The viewer polls the selected mesh's latest saved revision and can replay its recorded commands while its editor is running or after it stops. A legacy or standalone `project.json` may have no revision label until an editor opens it. The viewer reads workspace files and never starts an editing session.
+Each browser tab has its own mesh selection. The viewer polls the selected mesh's latest saved revision. A legacy or standalone `project.json` may have no revision label until an editor opens it. The viewer reads workspace files and never starts an editing session.
 
-Each editor saves changes automatically and owns its own undo history. Stop an editor with Ctrl+C when you finish editing. The saved geometry, revision, workflow and replay remain available in the project viewer.
+Each editor saves changes automatically and owns its own undo history. Stop an editor with Ctrl+C when you finish editing. The project viewer continues to display the latest saved geometry and revision.
 
 Successful mesh edits include a compact top-level `turn_handoff` with the resulting revision and a workflow status request. Use the latest receipt when finishing the user's turn. Summarize what changed, what current evidence verifies, and any remaining uncertainty or next step. Check workflow status when checkpoint or export readiness matters. Selection changes, previews, and read-only commands omit the receipt.
 
@@ -102,11 +102,11 @@ For a short inspect/edit/capture/save walkthrough, read `{"command":"help","topi
 
 ## CLI feedback
 
-Run `feedback_submit` and `feedback_list` as single JSON requests to `mesh-cli`. They work without a running editor and print JSON to stdout.
+Run `feedback_submit` and `feedback_list` as single JSON requests to `atk-mesh-cli`. They work without a running editor and print JSON to stdout.
 
 ```powershell
-'{"command":"feedback_submit","kind":"workflow","summary":"Document door swing reviews","goal":"Check clearance through the full swing","observed":"The guide covers the closed pose only","suggestion":"Add a worked example with intermediate poses","related":"help:workflow"}' | mesh-cli
-'{"command":"feedback_list","limit":32}' | mesh-cli
+'{"command":"feedback_submit","kind":"workflow","summary":"Document door swing reviews","goal":"Check clearance through the full swing","observed":"The guide covers the closed pose only","suggestion":"Add a worked example with intermediate poses","related":"help:workflow"}' | atk-mesh-cli
+'{"command":"feedback_list","limit":32}' | atk-mesh-cli
 ```
 
 Use `missing_capability`, `command_issue`, `documentation`, or `workflow` as the kind. Include the goal, what you tried, what happened, and any workaround in the report. The required text fields are `summary`, `goal`, and `observed`. The optional `suggestion` and `related` fields accept text, including a command name, help topic, or replay trace reference. Omit credentials and sensitive project data. The CLI assigns an ID, timestamp, and version and returns the ID and inbox directory.
@@ -117,11 +117,11 @@ The inbox is shared across workspaces for the current OS user. It defaults to `%
 
 ## Batch commands
 
-Pass a JSON array of 1–1024 command objects through stdin, a positional JSON argument, or a UTF-8 file. The CLI detects arrays automatically. Use `--batch` to require array input. Update both the CLI and server to use single-request batching.
+Pass a JSON array of 1–1024 command objects through stdin, `--command JSON`, or a UTF-8 file. The CLI detects arrays automatically. Use `--batch` to require array input. Update both the CLI and server to use single-request batching.
 
 ```powershell
-'[{"command":"workflow_status"},{"command":"query_mesh","kind":"objects"}]' | mesh-cli --port 7879 --batch
-mesh-cli --port 7879 --batch --input recipe.json
+'[{"command":"workflow_status"},{"command":"query_mesh","kind":"objects"}]' | atk-mesh-cli --port 7879 --batch
+atk-mesh-cli --port 7879 --batch --input recipe.json
 ```
 
 The CLI sends the whole array in one request. The server checks that every entry is an object with a nonempty `command` string before executing anything. It then runs the commands in order without interleaving requests from other clients. Later commands see earlier changes. Commands that need a returned ID or revision belong in a follow-up request.
@@ -194,58 +194,56 @@ In a transaction, `guards.protected_boundaries:["panel"]` locks a named perimete
 
 ## Minimal example
 
-Use a new, disposable workspace for this example. Start `mesh-server --workspace .mesh/quickstart --port 17879` in one terminal and leave it running. A fresh workspace starts empty. Use the explicit `cube` command below to create object 1 for the walkthrough. In a second PowerShell terminal:
+Use a new, disposable workspace for this example. Start `atk-mesh --workspace .mesh/quickstart --port 17879` in one terminal and leave it running. A fresh workspace starts empty. Use the explicit `cube` command below to create object 1 for the walkthrough. In a second PowerShell terminal:
 
 ```powershell
-'{"command":"help","topic":"workflow"}' | mesh-cli --port 17879
-'{"command":"workflow_status"}' | mesh-cli --port 17879
-'{"command":"query_mesh","kind":"objects"}' | mesh-cli --port 17879
-'{"command":"workflow_assess","requirement":"intent","assessment":"Practice moving a cube and saving a preview and native geometry.","evidence":[]}' | mesh-cli --port 17879
-'{"command":"cube"}' | mesh-cli --port 17879
-'{"command":"select_object","object":1}' | mesh-cli --port 17879
-'{"command":"move","value":[0,0.25,0]}' | mesh-cli --port 17879
-'{"command":"capture","yaw":35,"pitch":25}' | mesh-cli --port 17879 --output quickstart.png
-'{"command":"save"}' | mesh-cli --port 17879 --output quickstart.json
+'{"command":"help","topic":"workflow"}' | atk-mesh-cli --port 17879
+'{"command":"workflow_status"}' | atk-mesh-cli --port 17879
+'{"command":"query_mesh","kind":"objects"}' | atk-mesh-cli --port 17879
+'{"command":"workflow_assess","requirement":"intent","assessment":"Practice moving a cube and saving a preview and native geometry.","evidence":[]}' | atk-mesh-cli --port 17879
+'{"command":"cube"}' | atk-mesh-cli --port 17879
+'{"command":"select_object","object":1}' | atk-mesh-cli --port 17879
+'{"command":"move","value":[0,0.25,0]}' | atk-mesh-cli --port 17879
+'{"command":"capture","yaw":35,"pitch":25}' | atk-mesh-cli --port 17879 --output quickstart.png
+'{"command":"save"}' | atk-mesh-cli --port 17879 --output quickstart.json
 ```
 
-Check each exit status and JSON response before continuing. Open `quickstart.png` to inspect the result; view the saved mesh in the project viewer with `mesh-server --project . --port 7878`. The server persists edits in `.mesh/quickstart/project.json`; `quickstart.json` is an additional native model save. Stop and restart the server with the same workspace to resume.
+Check each exit status and JSON response before continuing. Open `quickstart.png` to inspect the result; view the saved mesh in the project viewer with `atk-mesh --project . --port 7878`. The server persists edits in `.mesh/quickstart/project.json`; `quickstart.json` is an additional native model save. Stop and restart the server with the same workspace to resume.
 
 This example stays in blockout and leaves visual requirements pending. Before detailing a real asset, review its references and captures and assess the relevant modeling requirements. When the user is ready to integrate the asset, complete export validation, export the requested format, and verify it with an independent import.
 
 ## Run from source
 
 ```powershell
-cargo run --bin mesh-server -- --workspace workspaces/example --port 7879
+cargo run --bin atk-mesh -- --workspace workspaces/example --port 7879
 ```
 
-This example starts the server in single-workspace mode and creates the directory if needed. Opening a workspace restores its `project.json`, starts a new recording, and makes older recordings available from `sessions/`. Document changes automatically update `project.json`. Copy the entire workspace directory to preserve both geometry and replay history.
+This example starts the server in single-workspace mode and creates the directory if needed. Opening a workspace restores its `project.json` and keeps existing trace records under `sessions/`. Document changes automatically update `project.json`. Copy the entire workspace directory to preserve both geometry and replay history.
 
-Start the project viewer in a separate terminal with `cargo run --bin mesh-server -- --project . --port 7878`. Open http://127.0.0.1:7878 and select the workspace with the folder picker. Drag to orbit, right-drag (or Shift-drag) to pan, and scroll to zoom. Touch supports one-finger orbit and two-finger pan and pinch. Switch between **Mesh** and **Animation** in the header. The render icons show shaded geometry, topology edges, lit vertex paint, or lit textures. Open **Debug** for diagnostic views, the UV checker, and the base-color preview. **Settings** contains the grid, auto rotation, Objects, and Replay. Send editing commands to the editor on port 7879.
+Start the project viewer in a separate terminal with `cargo run --bin atk-mesh -- --project . --port 7878`. Open http://127.0.0.1:7878 and select the workspace with the folder picker. Drag to orbit, right-drag (or Shift-drag) to pan, and scroll to zoom. Touch supports one-finger orbit and two-finger pan and pinch. Switch between **Mesh** and **Animation** in the header. The render icons show shaded geometry, topology edges, lit vertex paint, or lit textures. Open **Debug** for diagnostic views, the UV checker, and the base-color preview. **Settings** contains the grid, auto rotation, and Objects. Send editing commands to the editor on port 7879.
 
-The **Objects** inspector lists object names, IDs, vertex counts and color swatches matching **Object IDs** mode. Search by name or ID, toggle individual objects, hide or isolate all matches, use **Solo** for one object, and **Frame** to focus it. Visibility is browser-only state: it does not change selections, model data, CLI captures, exports or replay recordings. Hidden objects remain hidden across live edits and replay snapshots while their IDs exist; removed IDs are dropped, new objects start visible, and reloading or changing workspaces resets visibility. **Show all** restores the full model. The inspector and Replay share the side panel space.
+The **Objects** inspector lists object names, IDs, vertex counts and color swatches matching **Object IDs** mode. Search by name or ID, toggle individual objects, hide or isolate all matches, use **Solo** for one object, and **Frame** to focus it. Visibility is browser-only state: it does not change selections, model data, CLI captures, exports or replay recordings. Hidden objects remain hidden across live edits while their IDs exist; removed IDs are dropped, new objects start visible, and reloading or changing workspaces resets visibility. **Show all** restores the full model.
 
 The viewer polls the shared document every 400 ms while visible, updates changed geometry, and preserves the camera across edits. It retries on disconnect and keeps the last model visible. It does not request SVG captures or mutate mesh selections. WebGL 2 is required; no external libraries, CDN or frontend build step are used. Use simple planar polygons for predictable rendering.
 
 In a separate terminal, send commands to the editor:
 
 ```powershell
-'{"command":"inspect"}' | cargo run --quiet --bin mesh-cli -- --port 7879
-'{"command":"capture","yaw":35,"pitch":25}' | cargo run --quiet --bin mesh-cli -- --port 7879
+'{"command":"inspect"}' | cargo run --quiet --bin atk-mesh-cli -- --port 7879
+'{"command":"capture","yaw":35,"pitch":25}' | cargo run --quiet --bin atk-mesh-cli -- --port 7879
 ```
 
 ## Recording and replay
 
-Open **Replay** from **Settings** to browse recorded sessions, scrub or play their command sequence, and inspect each command's input, returned output, full result, execution time and JSON byte counts. Capture commands also show their saved PNG. Filter the command list by command name or summary fields and download individual events for deeper inspection. **Go live** returns to the current document. Replay only displays saved snapshots; it never executes recorded commands or changes the live mesh. The play button advances one command every 700 ms rather than reproducing original pauses.
+Add `--debug` to `atk-mesh-cli` to save a JSONL timeline in the workspace's `recordings/` directory. The CLI prints its path to stderr. Use `atk-mesh-cli --replay FILE` to read the timeline or add `--frame N` to select a snapshot. Frame 0 is the initial state. Replay leaves the workspace untouched. A batch submission without confirmed replies may still have reached the editor. Check the workspace before retrying.
 
-Replay defaults to **Entire workspace · All sessions**, a chronological timeline across server restarts. Each event still reads its original session's input, output and snapshot; no logs are rewritten. Individual sessions remain selectable. `/sessions/workspace` exposes the combined index with `session` and `source_event` references.
-
-The server automatically records API/CLI commands, including failed operations and undo/redo, under `<model-workspace>/sessions/<session-id>/`. Each server run starts a new session; previous sessions remain available. Snapshot zero is the document at the start of that session, and subsequent snapshots are saved when document state changes. Viewer polling uses `GET /state` and is excluded from recordings. Existing work from before recording was added cannot be reconstructed. Opening the workspace restores its saved mesh and exposes its recorded history to Replay. The workspace timeline includes construction from earlier runs even when the latest session is empty. A standalone CLI `save` JSON file contains native mesh and appearance data, without workflow decisions or replay; retain the whole workspace directory to include the log.
+Start a workspace editor with `--debug` in either a debug or release build to record all API/CLI commands, including failures and undo/redo, under `<model-workspace>/sessions/<session-id>/`. The editor writes gzip events and snapshots, starting with the initial document and adding snapshots on revision changes. Without the flag, the editor saves the workspace normally and records successful capture, comparison and review commands with the snapshots needed for workflow evidence. Viewer polling uses `GET /state` and is excluded from recordings. Previous sessions remain readable.
 
 Replies are compact by default, including `inspect`, load, undo and redo: they omit full mesh, adjacency and edge lists. Revision, counts, validation and history remain available. Collections larger than eight entries return `{count, sample, truncated:true, path}` instead of every ID or topology mapping. A shared node budget and nesting limit further bound complex results; large strings return byte counts. `path` is a JSON pointer into the original result and can be passed to `query_record`. Small collections remain unchanged. Add `"response":"full"` to request the original complete result, including inline artifact payloads. This deliberately replaces the earlier default of full `inspect` results and unbounded edit selections.
 
 Prefer targeted reads: `query_mesh` returns exact, paged records for `kind:"vertices"`, `"faces"`, `"selection"` or `"objects"`. Optional `ids:[...]` filters records; `object` scopes vertex/face/selection queries. Pages default to 32 entries, `limit` accepts 1–256, and `offset` plus `next_offset` supports traversal. Mesh records use numeric ID order. Object records contain names, origins, vertex counts and smoothing settings rather than full membership lists. Use `revision` to reject pages from a changed document. Existing region/profile/loop/shading queries remain available; use a small region or `response:"full"` when all of its local context is required.
 
-`query_record` reads immutable recorded data: provide `session`, `event`, `path`, and optional `offset`/`limit`. Array pages preserve order; object pages use serialized key order. It returns the page, source revision and current revision without re-executing the operation. Nested page values are still bounded and carry deeper retrieval paths; `response:"full"` returns exact page values. This allows detailed topology mappings to remain on the PC until the agent actually needs them. For example:
+`query_record` reads immutable recorded data. Start the editor with `--debug` to retrieve pages from ordinary command replies, or request `response:"full"` on the original command. To page a recorded result, provide `session`, `event`, `path`, and optional `offset`/`limit`. Array pages preserve order; object pages use serialized key order. It returns the page, source revision and current revision without re-executing the operation. Nested page values are still bounded and carry deeper retrieval paths; `response:"full"` returns exact page values. This allows detailed topology mappings to remain on the PC until the agent actually needs them. For example:
 
 ```json
 {"command":"select","vertices":[1,2],"note":"Select the hinge attachment vertices"}
@@ -264,11 +262,11 @@ Read-only recording endpoints are `GET /sessions`, `/sessions/<id>`, `/sessions/
 The CLI also accepts a JSON argument and an optional output filename. A capture saved with a `.png` extension writes the PNG directly; other capture filenames receive an SVG containing that same PNG. Export to `.fbx` writes native binary FBX; OBJ remains available. Other commands write result JSON. For shells that change argument quoting, use stdin or invoke the executable with a subprocess argument array.
 
 ```text
-mesh-cli '{"command":"capture","yaw":0,"pitch":0}' front.svg
-mesh-cli '{"command":"capture","mode":"face_ids","yaw":35,"pitch":25}' faces.png
-mesh-cli '{"command":"export"}' mesh.fbx
-mesh-cli '{"command":"export","format":"obj"}' mesh.obj
-mesh-cli '{"command":"save"}' mesh.json
+atk-mesh-cli '{"command":"capture","yaw":0,"pitch":0}' front.svg
+atk-mesh-cli '{"command":"capture","mode":"face_ids","yaw":35,"pitch":25}' faces.png
+atk-mesh-cli '{"command":"export"}' mesh.fbx
+atk-mesh-cli '{"command":"export","format":"obj"}' mesh.obj
+atk-mesh-cli '{"command":"save"}' mesh.json
 ```
 
 ## Modeling requirements
@@ -355,7 +353,7 @@ Default replies are compact. Capture/export/save payloads are written to files a
 {"ok":true,"result":{"artifacts":{"png":{"path":"C:/project/.mesh/model/sessions/session-id/artifacts/7.png","bytes":12345},"svg":{"path":"C:/project/.mesh/model/sessions/session-id/artifacts/7.svg","bytes":17000}}},"trace":{"session":"session-id","event":7,"record":"/sessions/session-id/events/7"}}
 ```
 
-`mesh-cli --output preview.png` copies `result.artifacts.png.path` to the requested local destination and adds a top-level `written:{path,bytes}` receipt. A capture saved to another extension uses SVG; export to `.fbx` selects FBX automatically, while `format:"obj"` selects OBJ. `save` uses the `project` artifact. Create destination directories first. Client output paths resolve from the client's working directory; artifacts remain in the server's session directory. Both programs must run on the same machine. An `artifact_error` means artifact writing failed; an output-copy failure may occur after a successful recorded command, so do not blindly retry an edit.
+`atk-mesh-cli --output preview.png` copies `result.artifacts.png.path` to the requested local destination and adds a top-level `written:{path,bytes}` receipt. A capture saved to another extension uses SVG; export to `.fbx` selects FBX automatically, while `format:"obj"` selects OBJ. `save` uses the `project` artifact. Create destination directories first. Client output paths resolve from the client's working directory; artifacts remain in the server's session directory. Both programs must run on the same machine. An `artifact_error` means artifact writing failed; an output-copy failure may occur after a successful recorded command, so do not blindly retry an edit.
 
 For inline payloads, send `response:"full"`: captures return `result.png_base64` and `result.svg`; FBX export returns `result.fbx_base64`; OBJ export returns `result.obj`; save returns the native project in `result`. Full replies skip artifact-file projection, and the CLI can also consume their inline payloads with `--output`. Default compact replies avoid transferring these large strings.
 
@@ -602,8 +600,8 @@ Run `workflow_status` before exporting. The editor requires all applicable workf
 - Use `format:"glb"` for glTF geometry, with skinning and clips when the workspace has a rig. See `rigging-and-animation` for animation details.
 
 ```powershell
-'{"command":"export","format":"glb"}' | mesh-cli --port 7879 --output model.glb
-'{"command":"export"}' | mesh-cli --port 7879 --output model.stl
+'{"command":"export","format":"glb"}' | atk-mesh-cli --port 7879 --output model.glb
+'{"command":"export"}' | atk-mesh-cli --port 7879 --output model.stl
 ```
 
 Use `texture_export` to save texture images for the consuming application. Import the result in the intended tool and verify its geometry, transforms, and animation as applicable.
@@ -820,7 +818,7 @@ Capture and comparison `solo_collections` unions memberships, then intersects wi
 
 In **Collection IDs** mode, an object's primary collection determines its colour; unassigned objects are neutral grey `[128,128,128]`. Capture replies include `collection_id_colors` (hex colour to collection ID), retaining entries for hidden collections. Membership updates assign a primary only to objects without one. `primary:true` explicitly assigns this collection to all members; `primary:false` clears its primary assignments. Removing a primary membership leaves that object unassigned until reassigned. Other memberships remain available for targeting.
 
-The viewer Objects panel presents expandable collection branches with member objects underneath, plus Ungrouped for objects without membership. Objects in multiple collections appear in each branch with synchronized visibility; counts and bulk actions deduplicate object IDs. Search reveals matching branches and objects, then restores expansion choices when cleared. Expansion survives live updates and replay within a workspace. Overlapping collections show partial visibility where appropriate. Controls use existing viewer-local object visibility; they do not edit membership, exports or CLI captures. Membership and colours update with live edits and replay.
+The viewer Objects panel presents expandable collection branches with member objects underneath, plus Ungrouped for objects without membership. Objects in multiple collections appear in each branch with synchronized visibility; counts and bulk actions deduplicate object IDs. Search reveals matching branches and objects, then restores expansion choices when cleared. Expansion survives live updates within a workspace. Overlapping collections show partial visibility where appropriate. Controls use existing viewer-local object visibility; they do not edit membership, exports or CLI captures. Membership and colours update with live edits.
 
 ## Capture object visibility
 
@@ -937,7 +935,7 @@ Basic UV/texture/vertex-paint data requires at least version 3; layers/maps use 
 
 Cylindrical projection measures `atan2(second_radial_axis,first_radial_axis)` using cyclic radial axes (Y cylinder: Z then X). `phase` offsets this angle in turns. Adjacent seam faces get independent corner values; seam-crossing faces unwrap by subtracting one turn from high U values. This can put coordinates slightly outside the atlas region; inspect the layout when moving a seam through a face. The cylinder fits an ellipse to the scope bounds. With `fit_sections:true`, vertices sorted by axial position are grouped within `section_tolerance` of each group's first vertex, and each group fits its own radial bounds. Default tolerance is zero. Use this for sampled rings, including gently tilted rings with an appropriate tolerance; arbitrary meshes may need different mapping or direct UV assignments. Map caps separately with planar/box projection. These are optional coordinate operations, not an unwrap/packing pipeline; overlap and mirrored faces can be intentional.
 
-Save a JSON array of native commands and run it with `mesh-cli --port 17891 --batch --input recipe.json`. See [batch commands](#batch-commands) for reply and failure behavior. Texture import paths resolve from the server workspace.
+Save a JSON array of native commands and run it with `atk-mesh-cli --port 17891 --batch --input recipe.json`. See [batch commands](#batch-commands) for reply and failure behavior. Texture import paths resolve from the server workspace.
 
 For example, on an inspected starter cube:
 

@@ -21,7 +21,7 @@ impl Drop for Server {
 }
 
 fn invoke(port: u16, arguments: &[&str], input: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mesh-cli"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_atk-mesh-cli"))
         .env("MESH_PORT", "invalid")
         .args(["--port", &port.to_string()])
         .args(arguments)
@@ -53,6 +53,15 @@ fn start_server(project_mode: bool) -> (Server, u16) {
 }
 
 fn start_server_at(project_mode: bool, workspace: Option<PathBuf>, seed_cube: bool) -> (Server, u16) {
+    start_server_with_options(project_mode, workspace, seed_cube, &[])
+}
+
+fn start_server_with_options(
+    project_mode: bool,
+    workspace: Option<PathBuf>,
+    seed_cube: bool,
+    options: &[&str],
+) -> (Server, u16) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
@@ -60,8 +69,9 @@ fn start_server_at(project_mode: bool, workspace: Option<PathBuf>, seed_cube: bo
     let workspace = workspace.unwrap_or_else(|| {
         std::env::temp_dir().join(format!("mesh-cli-test-{}-{port}", std::process::id()))
     });
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mesh-server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_atk-mesh"));
     command
+        .args(options)
         .env("MESH_PORT", "invalid")
         .args(["--port", &port.to_string()]);
     if project_mode {
@@ -299,7 +309,16 @@ fn empty_editor_accepts_first_object_and_persists_last_object_deletion() {
     let send = |input| reply(&invoke(port, &[], input));
     let initial = send(r#"{"command":"inspect"}"#);
     assert_eq!(initial["result"]["counts"]["objects"], 0);
-    assert_eq!(send(r#"{"command":"capture","width":64,"height":64}"#)["ok"], true);
+    assert!(initial.get("trace").is_none());
+    let capture = send(r#"{"command":"capture","width":64,"height":64}"#);
+    assert_eq!(capture["ok"], true);
+    let record = capture["trace"]["record"].as_str().unwrap();
+    let (status, event) = get_json(port, record);
+    assert_eq!(status, 200);
+    assert_eq!(event["input"]["command"], "capture");
+    let session = capture["trace"]["session"].as_str().unwrap();
+    let snapshot = event["summary"]["snapshot"].as_u64().unwrap();
+    assert_eq!(get_json(port, &format!("/sessions/{session}/states/{snapshot}")).0, 200);
     let created = send(r#"{"command":"object_create_box","name":"Box","min":[0,0,0],"max":[1,1,1]}"#);
     assert_eq!(created["ok"], true);
     assert_eq!(send(r#"{"command":"object_instance","object":1,"name":"Copy"}"#)["ok"], true);
@@ -374,10 +393,50 @@ fn timed_out_write_reports_the_id_sent_to_the_server() {
 
     let result = client.join().unwrap();
     assert!(!result.status.success());
-    assert!(result.stdout.is_empty());
+    let failure = reply(&result);
+    assert_eq!(failure["ok"], false);
+    assert!(failure["error"].as_str().unwrap().contains(id));
     let error = String::from_utf8(result.stderr).unwrap();
     assert!(error.contains("could not confirm the command outcome"));
+    assert!(error.contains("Check the current workspace before retrying"));
+    assert!(error.contains("If the editor was started with --debug"));
     assert!(error.contains(id));
+}
+
+#[test]
+fn debug_replay_preserves_request_ids_and_requires_saved_snapshots() {
+    let (server, port) = start_server_with_options(false, None, false, &["--debug"]);
+    let output = invoke(port, &["--debug"], r#"{"command":"inspect"}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let response = reply(&output);
+    let (_, event) = get_json(port, response["trace"]["record"].as_str().unwrap());
+    let id = event["input"]["cli_request_id"].as_str().unwrap();
+
+    let recordings = server.workspace.join("recordings");
+    let recording = std::fs::read_dir(recordings).unwrap().next().unwrap().unwrap().path();
+    let replay = |frame: &str| {
+        Command::new(env!("CARGO_BIN_EXE_atk-mesh-cli"))
+            .arg("--replay")
+            .arg(&recording)
+            .args(["--frame", frame])
+            .output()
+            .unwrap()
+    };
+    let timeline = std::fs::read_to_string(&recording).unwrap();
+    let request: Value = serde_json::from_str(timeline.lines().nth(1).unwrap()).unwrap();
+    assert_eq!(request["request"]["cli_request_id"], id);
+    let saved = replay("1");
+    assert!(saved.status.success());
+    assert_eq!(reply(&saved)["revision"], 0);
+
+    let mut file = std::fs::OpenOptions::new().append(true).open(&recording).unwrap();
+    writeln!(file, r#"{{"type":"reply","sequence":2,"reply":{{"ok":false}},"state":null}}"#).unwrap();
+    drop(file);
+    let missing = replay("2");
+    assert_eq!(missing.status.code(), Some(1));
+    let failure = reply(&missing);
+    assert_eq!(failure["ok"], false);
+    assert_eq!(failure["error"], "Recording has no saved snapshot for frame 2");
 }
 
 #[test]
@@ -450,7 +509,7 @@ fn installed_binaries_support_project_workspaces_and_structured_failures() {
         r#"[{"command":"uv_project","mode":"box"},{}]"#,
     );
     assert!(!invalid_batch.status.success());
-    assert!(invalid_batch.stdout.is_empty());
+    assert_eq!(reply(&invalid_batch)["ok"], false);
 
     let input = r#"[{"command":"uv_project","mode":"box"},{}]"#;
     let mut connection = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -550,7 +609,7 @@ fn installed_binaries_support_project_workspaces_and_structured_failures() {
     for input in ["", "[]", "null", r#"{"command":2}"#] {
         let invalid = invoke(port, &[], input);
         assert!(!invalid.status.success());
-        assert!(invalid.stdout.is_empty());
+        assert_eq!(reply(&invalid)["ok"], false);
     }
 
     let edited = invoke(port, &[], r#"{"command":"select","vertices":[1]}"#);
@@ -628,9 +687,10 @@ fn project_viewer_reads_current_revisions_from_independent_editors() {
         400
     );
 
-    let (mut first_editor, first_port) = start_server_at(false, Some(first_path.clone()), false);
+    let (mut first_editor, first_port) =
+        start_server_with_options(false, Some(first_path.clone()), false, &["--debug"]);
     let second_path = viewer.workspace.join(second);
-    let (_second_editor, second_port) = start_server_at(false, Some(second_path), true);
+    let (_second_editor, second_port) = start_server_at(false, Some(second_path.clone()), true);
     let lock = std::fs::File::options()
         .read(true)
         .write(true)
@@ -659,6 +719,7 @@ fn project_viewer_reads_current_revisions_from_independent_editors() {
         String::from_utf8_lossy(&edited.stderr)
     );
     assert!(other.status.success());
+    assert!(!second_path.join("sessions").exists());
     let lines = String::from_utf8(edited.stdout).unwrap();
     let last: Value = serde_json::from_str(lines.lines().last().unwrap()).unwrap();
     let record = last["trace"]["record"].as_str().unwrap();
@@ -711,8 +772,8 @@ fn project_viewer_reads_current_revisions_from_independent_editors() {
 #[test]
 fn help_version_and_invalid_options_do_not_need_a_server() {
     for binary in [
-        env!("CARGO_BIN_EXE_mesh-cli"),
-        env!("CARGO_BIN_EXE_mesh-server"),
+        env!("CARGO_BIN_EXE_atk-mesh-cli"),
+        env!("CARGO_BIN_EXE_atk-mesh"),
     ] {
         for flag in ["--help", "--version"] {
             let output = Command::new(binary)
@@ -726,7 +787,7 @@ fn help_version_and_invalid_options_do_not_need_a_server() {
                 let help = String::from_utf8(output.stdout).unwrap();
                 assert!(help.contains("command\":\"help"));
                 assert!(help.contains("workflow"));
-                if binary == env!("CARGO_BIN_EXE_mesh-server") {
+                if binary == env!("CARGO_BIN_EXE_atk-mesh") {
                     assert!(help.contains("--headless"));
                 }
             }

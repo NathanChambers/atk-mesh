@@ -13,14 +13,14 @@ From the repository root, start an editor for a scratch copy in one PowerShell t
 ```powershell
 $fixture = Join-Path $env:TEMP ("mesh-texturing-" + [guid]::NewGuid())
 Copy-Item tests/fixtures/texturing/panel $fixture -Recurse
-cargo run --bin mesh-server -- --workspace $fixture --port 17891
+cargo run --bin atk-mesh -- --workspace $fixture --port 17891
 ```
 
 Run these commands in a second terminal from the repository root. Use a different free port if needed.
 
 ```powershell
-$cli = "./target/debug/mesh-cli.exe"
-cargo build --bin mesh-cli
+$cli = "./target/debug/atk-mesh-cli.exe"
+cargo build --bin atk-mesh-cli
 '{"command":"inspect_uv"}' | & $cli --port 17891
 & $cli --port 17891 --batch --input tests/fixtures/texturing/smoke-recipe.json
 '{"command":"texture_layer_capture","texture":"test-atlas","layer":"face-mask"}' | & $cli --port 17891 --output "$env:TEMP/mesh-face-mask.png"
@@ -32,7 +32,7 @@ All three meshes should report zero missing, degenerate, mirrored and out-of-bou
 
 ## Edit a stripe on the cylinder
 
-Start with a fresh copy of `seam-cylinder` and send these commands using `mesh-cli --batch --input FILE`.
+Start with a fresh copy of `seam-cylinder` and send these commands using `atk-mesh-cli --batch --input FILE`.
 
 ```json
 [

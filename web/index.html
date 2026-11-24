@@ -62,20 +62,22 @@
                         <button id="grid" type="button" aria-pressed="false">Grid</button>
                         <button id="turntable" type="button" aria-pressed="false">Auto rotate</button>
                         <button id="objects-open" type="button" aria-expanded="false" aria-controls="objects-panel" disabled>Objects</button>
-                        <button id="replay-open" type="button" aria-expanded="false" aria-controls="replay-panel" disabled>Replay</button>
                     </div>
                 </details>
                 <div id="camera-gizmo" role="group" aria-label="Camera view">
                     <div class="camera-axes" role="group" aria-label="Snap to axis">
                         <div id="camera-axis-lines" aria-hidden="true"></div>
-                        <button id="camera-right" type="button" class="camera-axis axis-x" aria-label="Right (+X)" title="Right (+X)">X</button>
+                        <button id="camera-right" type="button" class="camera-axis axis-x" aria-label="Right (+X)" title="Right (+X)">+X</button>
                         <button id="camera-left" type="button" class="camera-axis axis-x" aria-label="Left (−X)" title="Left (−X)">−X</button>
-                        <button id="camera-top" type="button" class="camera-axis axis-y" aria-label="Top (+Y)" title="Top (+Y)">Y</button>
+                        <button id="camera-top" type="button" class="camera-axis axis-y" aria-label="Top (+Y)" title="Top (+Y)">+Y</button>
                         <button id="camera-bottom" type="button" class="camera-axis axis-y" aria-label="Bottom (−Y)" title="Bottom (−Y)">−Y</button>
-                        <button id="camera-front" type="button" class="camera-axis axis-z" aria-label="Front (+Z)" title="Front (+Z)">Z</button>
+                        <button id="camera-front" type="button" class="camera-axis axis-z" aria-label="Front (+Z)" title="Front (+Z)">+Z</button>
                         <button id="camera-back" type="button" class="camera-axis axis-z" aria-label="Back (−Z)" title="Back (−Z)">−Z</button>
                     </div>
-                    <button id="orthographic" type="button" aria-label="Orthographic projection" aria-pressed="false" title="Switch to orthographic projection">Perspective</button>
+                    <div class="camera-projection" role="group" aria-label="Camera projection">
+                        <button id="perspective" type="button" aria-label="Perspective projection" aria-pressed="true" title="Perspective projection">Perspective</button>
+                        <button id="orthographic" type="button" aria-label="Orthographic projection" aria-pressed="false" title="Orthographic projection">Ortho</button>
+                    </div>
                 </div>
             </div>
         </header>
@@ -91,33 +93,16 @@
         </dialog>
         <div id="notice" role="status">Loading model…</div>
         <aside id="objects-panel" hidden aria-label="Object inspector">
-            <div class="replay-heading"><strong>Objects</strong><button id="objects-close" type="button">Close</button></div>
-            <label class="replay-search">Find <input id="objects-search" type="search" placeholder="Collection, object name or ID…"></label>
+            <div class="objects-heading"><strong>Objects</strong><button id="objects-close" type="button">Close</button></div>
+            <label class="objects-search">Find <input id="objects-search" type="search" placeholder="Collection, object name or ID…"></label>
             <div class="object-actions"><button id="objects-show-all" type="button">Show all</button><button id="objects-hide-filtered" type="button">Hide matching</button><button id="objects-isolate-filtered" type="button">Solo matching</button></div>
             <div id="objects-summary" role="status"></div>
             <div id="objects-list" aria-label="Collections and objects"></div>
             <p id="objects-empty" hidden>No matching objects.</p>
             <p class="object-hint">Objects may appear in multiple collections. Collection swatches match Collection IDs mode; object swatches match Object IDs mode. Visibility is local to this viewer; exports and CLI captures are unchanged.</p>
         </aside>
-        <aside id="replay-panel" hidden aria-label="Session replay">
-            <div class="replay-heading"><strong>Session replay</strong><button id="replay-close" type="button">Close</button></div>
-            <select id="session-list" aria-label="Recorded session"></select>
-            <div class="replay-transport"><button id="replay-previous" type="button">Previous</button><button id="replay-play" type="button">Play</button><button id="replay-next" type="button">Next</button><button id="replay-live" type="button">Go live</button></div>
-            <input id="replay-position" type="range" min="0" max="0" value="0" aria-label="Command position">
-            <label class="replay-search">Find commands <input id="replay-search" type="search" placeholder="Command, ID or status…"></label>
-            <div id="replay-summary" role="status"></div>
-            <div id="replay-events" aria-label="Recorded commands"></div>
-            <img id="replay-capture" hidden alt="Render returned by the selected capture command">
-            <div class="replay-detail-tabs" role="group" aria-label="Command details">
-                <button id="replay-input-tab" type="button" aria-pressed="true">Agent command</button>
-                <button id="replay-output-tab" type="button" aria-pressed="false">Reply</button>
-                <button id="replay-full-tab" type="button" aria-pressed="false">Full result</button>
-            </div>
-            <pre id="replay-detail" tabindex="0">Choose a command to inspect its input and output.</pre>
-            <a id="replay-download" download="mesh-event.json">Download selected event</a>
-        </aside>
         <footer>
-            <div class="metadata"><strong id="model-name">Live model</strong><span id="statistics">Waiting for geometry</span><button id="return-to-latest" type="button" hidden>Return to latest</button></div>
+            <div class="metadata"><strong id="model-name">Live model</strong><span id="statistics">Waiting for geometry</span></div>
             <div id="animation-controls" role="group" aria-label="Animation tools" hidden>
                 <div class="clip-control">
                     <button id="animation-clip-open" class="icon-control" type="button" aria-label="Choose animation clip" aria-haspopup="dialog" aria-controls="animation-clip-picker" title="Choose animation clip" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg></button>
