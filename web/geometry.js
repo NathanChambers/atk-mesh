@@ -175,7 +175,7 @@ export function buildCornerNormals(mesh) {
         }
         return unit(normal);
     });
-    return faces.map((face, index) => face.map(vertex => {
+    const corners = faces.map((face, index) => face.map(vertex => {
         if (flatFaces.has(Number(faceIds[index]))) { return normals[index]; }
         const angle = owners.get(vertex);
         if (angle === undefined || angle === null || angle === 0) { return normals[index]; }
@@ -204,6 +204,20 @@ export function buildCornerNormals(mesh) {
         const normal = unit(sum);
         return normal.every(value => value === 0) ? normals[index] : normal;
     }));
+    const indexByFace = new Map(faceIds.map((id, index) => [id, index]));
+    for (const object of Object.values(mesh.objects || {})) {
+        const link = object.instance;
+        if (!link?.scale?.some(factor => factor !== 1)) { continue; }
+        for (const [master, instance] of Object.entries(link.faces)) {
+            const source = corners[indexByFace.get(master)];
+            corners[indexByFace.get(String(instance))] = source.map(normal => {
+                const local = link.master_basis ? link.master_basis.map(row => dot(row, normal)) : normal;
+                const scaled = local.map((value, axis) => value / link.scale[axis]);
+                return unit(link.rotation.map(row => dot(row, scaled)));
+            });
+        }
+    }
+    return corners;
 }
 
 export function facePalette(count) {

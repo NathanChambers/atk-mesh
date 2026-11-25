@@ -21,6 +21,34 @@ fn sample(document: &mut Document, time: f64) -> Value {
 }
 
 #[test]
+fn joint_limits_constrain_sampled_rotation_without_rewriting_keys() {
+    let mut document = fixture();
+    document.execute(json!({"command":"rig_rotation_limits_set","limits":{
+        "upper":{"axis":[2,0,0],"max_swing":30,"twist":[-10,20]}
+    }})).unwrap();
+    document.execute(json!({"command":"animation_track_set","name":"Move","bone":"upper",
+        "keys":[{"time":0,"rotation":[90,0,90]}]})).unwrap();
+
+    let posed = document.execute(json!({"command":"animation_sample","clip":"Move","time":0,
+        "bones":["upper","tip"]})).unwrap();
+    let tip = posed["items"][1]["position"].as_array().unwrap();
+    assert!((tip[0].as_f64().unwrap() - 3.0_f64.sqrt()).abs() < 1e-12);
+    assert!((tip[1].as_f64().unwrap() - 1.0).abs() < 1e-12);
+    let rotation = posed["items"][0]["local_rotation"].as_array().unwrap();
+    let twist = 2.0 * rotation[0].as_f64().unwrap().atan2(rotation[3].as_f64().unwrap());
+    assert!((twist.to_degrees() - 20.0).abs() < 1e-12);
+    let keys = document.execute(json!({"command":"query_animation","clip":"Move","bone":"upper"})).unwrap();
+    assert_eq!(keys["items"][0]["rotation"], json!([90.0,0.0,90.0]));
+
+    assert!(document.execute(json!({"command":"rig_rotation_limits_set","limits":{
+        "upper":{"axis":[0,0,0],"max_swing":30,"twist":[-10,20]}
+    }})).is_err());
+    assert_eq!(sample(&mut document, 0.0)["items"][0]["position"], posed["items"][1]["position"]);
+    document.execute(json!({"command":"rig_rotation_limits_set","limits":{"upper":null}})).unwrap();
+    assert!((sample(&mut document, 0.0)["items"][0]["position"][1].as_f64().unwrap() - 2.0).abs() < 1e-12);
+}
+
+#[test]
 fn display_tails_preserve_animation_and_reject_invalid_edits_atomically() {
     let mut document = fixture();
     let before = sample(&mut document, 0.5);

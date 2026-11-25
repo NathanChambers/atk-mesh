@@ -81,6 +81,25 @@ function interpolateRotation(start, end, fraction) {
     return start.map((value, axis) => a * value + b * end[axis]);
 }
 
+function limitRotation(rotation, limit) {
+    if (limit === undefined) { return rotation; }
+
+    const { axis, max_swing: maxSwing, twist } = limit;
+    const sign = rotation[3] < 0 ? -1 : 1;
+    const projection = sign * axis.reduce((sum, value, index) => sum + value * rotation[index], 0);
+    const scalar = sign * rotation[3];
+    const twistAngle = Math.hypot(projection, scalar) < 1e-12 ? 0 : 2 * Math.atan2(projection, scalar);
+    const aroundAxis = angle => [...scale(axis, Math.sin(angle * 0.5)), Math.cos(angle * 0.5)];
+
+    const swing = multiply(rotation, aroundAxis(-twistAngle));
+    const swingAngle = 2 * Math.atan2(Math.hypot(...swing.slice(0, 3)), Math.abs(swing[3]));
+    const twistLimit = Math.max(twist[0], Math.min(twist[1], twistAngle));
+    if (swingAngle <= maxSwing && twistAngle === twistLimit) { return rotation; }
+
+    const limitedSwing = swingAngle > maxSwing ? interpolateRotation(identity, swing, maxSwing / swingAngle) : swing;
+    return multiply(limitedSwing, aroundAxis(twistLimit));
+}
+
 function sample(keys, time, interpolation) {
     if (keys === undefined) { return { rotation: identity, translation: zero }; }
     const index = keys.findIndex(key => key.time > time);
@@ -109,7 +128,13 @@ export function createAnimationSampler(mesh, clip) {
         const keys = Object.hasOwn(clip.tracks, bone.name) ? clip.tracks[bone.name] : undefined;
         const track = keys?.map(key => ({ ...key, rotation: quaternion(key.rotation) }));
         const interpolation = clip.interpolation?.[bone.name];
-        bones.set(bone.name, { position: bone.position, parent, offset, track, interpolation, matrix: new Float64Array(9) });
+        const limit = bone.rotation_limit;
+        const rotationLimit = limit === undefined ? undefined : {
+            axis: scale(limit.axis, 1 / Math.hypot(...limit.axis)),
+            max_swing: limit.max_swing * Math.PI / 180,
+            twist: scale(limit.twist, Math.PI / 180),
+        };
+        bones.set(bone.name, { position: bone.position, parent, offset, track, interpolation, rotationLimit, matrix: new Float64Array(9) });
     }
     const groups = new Map();
     const bindings = new Map();
@@ -139,7 +164,8 @@ export function createAnimationSampler(mesh, clip) {
             const { rotation, translation } = sample(joint.track, time, joint.interpolation);
             const parentRotation = joint.parent?.rotation ?? identity;
             const parentPosition = joint.parent?.origin ?? zero;
-            joint.rotation = multiply(parentRotation, rotation);
+            const localRotation = limitRotation(rotation, joint.rotationLimit);
+            joint.rotation = multiply(parentRotation, localRotation);
             joint.origin = add(parentPosition, rotate(parentRotation, add(joint.offset, translation)));
             writeRotationMatrix(joint.rotation, joint.matrix);
             const [x, y, z] = joint.position;

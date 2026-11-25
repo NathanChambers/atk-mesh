@@ -7,6 +7,38 @@ fn root(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("mesh-workflow-{name}-{}", std::process::id()))
 }
 
+#[test]
+fn measured_intent_survives_reopen_and_blocks_on_the_named_metric() {
+    let root = root("measured-intent");
+    common::write_cube_project(&root);
+    let mut session = Session::open_workspace(root.clone()).unwrap();
+    let accepted=session.execute(json!({"command":"workflow_assess","requirement":"intent","object":1,
+        "assessment":"Closed cube fixture","evidence":[],"constraints":{"max_triangles":10,"closed_surfaces":true,"pivot":[0,0,0]}}));
+    assert_eq!(accepted["ok"],true,"{accepted}");
+    drop(session);
+    let mut session=Session::open_workspace(root.clone()).unwrap();
+    let blocked=session.execute(json!({"command":"workflow_stage","stage":"complete"}));
+    assert_eq!(blocked["error"],"requirements_missing","{blocked}");
+    let issues=blocked["result"]["requirements"].as_array().unwrap();
+    assert!(issues.iter().any(|entry|entry["requirement"]=="max_triangles" && entry["check"]["measured"]==12 && entry["check"]["object"]==1));
+    assert!(!issues.iter().any(|entry|entry["requirement"]=="closed_shell_integrity"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn projected_face_regions_survive_reload_and_track_later_uv_edits() {
+    let mut doc=gpt_mesh::Document::default();
+    doc.execute(json!({"command":"uv_project","object":1,"mode":"box","region":[0.1,0.1,0.4,0.4]})).unwrap();
+    doc.execute(json!({"command":"uv_transform","faces":[1],"offset":[0.45,0]})).unwrap();
+    let saved=doc.execute(json!({"command":"save"})).unwrap();
+    let mut loaded=gpt_mesh::Document::default();
+    loaded.execute(json!({"command":"load","project":saved})).unwrap();
+    let report=loaded.execute(json!({"command":"inspect"})).unwrap();
+    let outside=report["source_metrics"]["region_violations"].as_array().unwrap();
+    assert_eq!(outside.len(),4);
+    assert!(outside.iter().all(|issue|issue["face"]==1 && issue["region"]==json!([0.1,0.1,0.4,0.4])));
+}
+
 fn status(session: &mut Session, requirement: &str, object: Option<u64>) -> Value {
     let report = session.execute(json!({"command":"workflow_status"}));
     report["result"]["requirements"]

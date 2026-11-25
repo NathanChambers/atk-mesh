@@ -172,6 +172,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                     name: name.clone(),
                     faces: faces.clone(),
                     recipe: None,
+                    uv_cap_faces: BTreeSet::new(),
                 },
             );
             Ok(json!({"component_id":id,"region":name,"faces":faces}))

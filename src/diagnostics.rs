@@ -280,6 +280,95 @@ fn contact(a: &Triangle, b: &Triangle, epsilon: f64) -> Option<(&'static str, [f
     None
 }
 
+fn unexpected_contact(
+    mesh: &Mesh,
+    a: &Triangle,
+    b: &Triangle,
+    witness: [f64; 3],
+    epsilon: f64,
+) -> Option<[f64; 3]> {
+    let face_a = &mesh.faces[&a.face];
+    let face_b = &mesh.faces[&b.face];
+    let shared: Vec<_> = face_a
+        .iter()
+        .filter(|v| face_b.contains(v))
+        .map(|v| mesh.vertices[v])
+        .collect();
+    if shared.is_empty() {
+        return Some(witness);
+    }
+
+    let mut shared_edges = Vec::new();
+    for (&u, &v) in face_a.iter().zip(face_a.iter().cycle().skip(1)) {
+        if face_b
+            .iter()
+            .zip(face_b.iter().cycle().skip(1))
+            .any(|(&s, &t)| (s == u && t == v) || (s == v && t == u))
+        {
+            shared_edges.push((mesh.vertices[&u], mesh.vertices[&v]));
+        }
+    }
+    let expected = |point| {
+        shared.iter().any(|p| length(sub(*p, point)) <= epsilon)
+            || shared_edges.iter().any(|&(p, q)| {
+                length(sub(closest_segments(p, q, point, point).0, point)) <= epsilon
+            })
+    };
+    if !expected(witness) {
+        return Some(witness);
+    }
+
+    let mut hits = vec![witness];
+    for (first, second) in [(a, b), (b, a)] {
+        for edge in 0..3 {
+            if let Some(hit) = segment_triangle(
+                first.points[edge],
+                first.points[(edge + 1) % 3],
+                second.points,
+                1e-10,
+            ) {
+                if !expected(hit) {
+                    return Some(hit);
+                }
+                hits.push(hit);
+            }
+        }
+    }
+    // Even when the endpoints are shared, the contact segment may pass through a face interior.
+    let mut span = (witness, witness);
+    let mut squared = 0.0;
+    for (index, &first) in hits.iter().enumerate() {
+        for &second in &hits[index + 1..] {
+            let delta = sub(second, first);
+            let distance = dot(delta, delta);
+            if distance > squared {
+                squared = distance;
+                span = (first, second);
+            }
+        }
+    }
+    if squared <= epsilon * epsilon {
+        return None;
+    }
+    let (start, end) = span;
+    let delta = sub(end, start);
+    let mut cuts = vec![0., 1.];
+    for vertex in &shared {
+        let t = dot(sub(*vertex, start), delta) / squared;
+        if t > 0. && t < 1. {
+            cuts.push(t);
+        }
+    }
+    cuts.sort_by(f64::total_cmp);
+    for segment in cuts.windows(2) {
+        let middle = add(start, mul(delta, (segment[0] + segment[1]) * 0.5));
+        if !expected(middle) {
+            return Some(middle);
+        }
+    }
+    None
+}
+
 pub(super) fn inspect(mesh: &Mesh, request: &Value, revision: u64) -> Result<Value, String> {
     report(mesh, request, revision, false)
 }
@@ -326,39 +415,10 @@ fn report(mesh: &Mesh, request: &Value, revision: u64, all: bool) -> Result<Valu
             let pair = [a.face.min(b.face), a.face.max(b.face)];
             if let Some((kind, mut point)) = contact(a, b, epsilon) {
                 if kind == "surface_intersection" && a.object == b.object {
-                    let shared: Vec<_> = mesh.faces[&a.face]
-                        .iter()
-                        .filter(|v| mesh.faces[&b.face].contains(v))
-                        .map(|v| mesh.vertices[v])
-                        .collect();
-                    let expected = |point: [f64; 3]| {
-                        shared.iter().any(|p| length(sub(*p, point)) <= epsilon)
-                            || (shared.len() == 2
-                                && length(sub(
-                                    closest_segments(shared[0], shared[1], point, point).0,
-                                    point,
-                                )) <= epsilon)
-                    };
-                    let mut unexpected = None;
-                    for (first, second) in [(a, b), (b, a)] {
-                        for i in 0..3 {
-                            if let Some(p) = segment_triangle(
-                                first.points[i],
-                                first.points[(i + 1) % 3],
-                                second.points,
-                                1e-10,
-                            ) {
-                                if !expected(p) {
-                                    unexpected = Some(p);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(p) = unexpected {
-                        point = p;
-                    } else {
+                    let Some(unexpected) = unexpected_contact(mesh, a, b, point, epsilon) else {
                         continue;
-                    }
+                    };
+                    point = unexpected;
                 }
                 let duplicate = kind == "coplanar_overlap"
                     && mesh.faces[&a.face].len() == mesh.faces[&b.face].len()

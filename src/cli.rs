@@ -4,7 +4,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-mod feedback;
+use gpt_mesh::feedback;
 mod recording;
 
 fn main() {
@@ -383,6 +383,10 @@ fn write_requested_output(
             format
         } else if png_output {
             "png"
+        } else if request["command"] == "workflow_report" {
+            "markdown"
+        } else if request["command"] == "export_verify" {
+            "report"
         } else if request["command"] == "save" {
             "project"
         } else if request["command"] == "capture" || request["command"] == "capture_uv" {
@@ -410,6 +414,7 @@ fn write_requested_output(
         } else {
             let output = result["svg"]
                 .as_str()
+                .or(result["markdown"].as_str())
                 .or(result["obj"].as_str())
                 .map(str::to_string)
                 .unwrap_or(serde_json::to_string_pretty(result)?);

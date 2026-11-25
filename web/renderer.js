@@ -40,6 +40,7 @@ in vec3 surfaceCollectionColor;
 in vec3 surfaceUv;
 in vec3 surfacePaint;
 uniform sampler2D textureImage;
+uniform bool singleSided;
 uniform bool hasTexture;
 uniform float alphaCutoff;
 uniform sampler2D normalImage;
@@ -96,8 +97,9 @@ void main() {
     }
     vec3 n = normalize(surfaceNormal);
     if (surfaceMode == 11) {
+        if (singleSided && !gl_FrontFacing) { discard; }
         if (surfaceUv.z < 0.5) { color = vec4(1.0, 0.0, 1.0, 1.0); return; }
-        vec2 coordinates = vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y));
+        vec2 coordinates = vec2(surfaceUv.x, 1.0 - surfaceUv.y);
         vec4 texel = hasTexture ? texture(textureImage, coordinates) : vec4(vec3(0.5), 1.0);
         vec3 base = pow(texel.rgb * surfacePaint, vec3(2.2));
         float roughness = clamp(hasRoughness ? texture(roughnessImage, coordinates).r : 0.65, 0.04, 1.0);
@@ -118,7 +120,7 @@ void main() {
             n = normalize(tangent * mapped.x + bitangent * mapped.y + n * mapped.z);
         }
         vec3 viewDirection = normalize(eye - worldPosition);
-        if (dot(surfaceNormal, viewDirection) < 0.0) { n = -n; }
+        if (!gl_FrontFacing) { n = -n; }
         vec3 lights[3] = vec3[3](normalize(vec3(-3.0, 5.0, 4.0)), normalize(vec3(4.0, 2.0, 1.0)), normalize(vec3(1.0, 3.0, -4.0)));
         float weights[3] = float[3](0.8, 0.27, 0.38);
         float diffuse = 0.0;
@@ -149,7 +151,9 @@ void main() {
             float odd = mod(floor(surfaceUv.x * 8.0) + floor(surfaceUv.y * 8.0), 2.0);
             color = vec4(vec3(odd > 0.5 ? 48.0 / 255.0 : 224.0 / 255.0), 1.0);
         } else if (hasTexture) {
-            vec4 texel = texture(textureImage, vec2(fract(surfaceUv.x), 1.0 - fract(surfaceUv.y)));
+            ivec2 size = textureSize(textureImage, 0);
+            ivec2 pixel = ivec2(fract(surfaceUv.xy) * vec2(size));
+            vec4 texel = texelFetch(textureImage, ivec2(pixel.x, size.y - 1 - pixel.y), 0);
             if (texel.a < alphaCutoff) { discard; }
             color = vec4(texel.rgb * surfacePaint, 1.0);
         } else { color = vec4(vec3(128.0 / 255.0), 1.0); }
@@ -195,7 +199,7 @@ export class ModelViewer {
 
         this.program = this.createProgram();
         this.locations = {};
-        for (const name of ['projection', 'camera', 'eye', 'mode', 'showGrid', 'groundCenter', 'groundRadius', 'surfaceMode', 'towardCamera', 'depthRange', 'textureImage', 'hasTexture', 'alphaCutoff', 'normalImage', 'roughnessImage', 'metallicImage', 'specularImage', 'hasNormal', 'hasRoughness', 'hasMetallic', 'hasSpecular']) {
+        for (const name of ['projection', 'camera', 'eye', 'mode', 'showGrid', 'groundCenter', 'groundRadius', 'surfaceMode', 'towardCamera', 'depthRange', 'textureImage', 'singleSided', 'hasTexture', 'alphaCutoff', 'normalImage', 'roughnessImage', 'metallicImage', 'specularImage', 'hasNormal', 'hasRoughness', 'hasMetallic', 'hasSpecular']) {
             this.locations[name] = this.gl.getUniformLocation(this.program, name);
         }
         this.mesh = null;
@@ -301,15 +305,16 @@ export class ModelViewer {
         this.gl.deleteVertexArray(geometry.vertexArray);
     }
 
-    createTexture(width, height, pixels) {
+    createTexture(width, height, pixels, filter) {
         const gl = this.gl;
         const texture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter === 'linear' ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter === 'linear' ? gl.LINEAR : gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        if (filter === 'linear') { gl.generateMipmap(gl.TEXTURE_2D); }
         return texture;
     }
 
@@ -324,14 +329,14 @@ export class ModelViewer {
             if (this.textures.has(name) === true) { continue; }
 
             const bytes = Uint8Array.from(atob(texture.rgba_base64), character => character.charCodeAt(0));
-            const handle = this.createTexture(texture.width, texture.height, bytes);
+            const handle = this.createTexture(texture.width, texture.height, bytes, texture.filter);
             const maps = {};
             for (const channel of ['normal', 'roughness', 'metallic', 'specular']) {
                 if (texture.maps?.[channel] === undefined) { continue; }
                 const pixels = Uint8Array.from(atob(texture.maps[channel]), character => character.charCodeAt(0));
-                maps[channel] = this.createTexture(texture.width, texture.height, pixels);
+                maps[channel] = this.createTexture(texture.width, texture.height, pixels, texture.filter);
             }
-            this.textures.set(name, { handle, maps, alphaCutoff: texture.alpha_cutoff ?? -1, key: JSON.stringify(texture) });
+            this.textures.set(name, { handle, maps, singleSided: texture.double_sided === false, alphaCutoff: texture.alpha_cutoff ?? -1, key: JSON.stringify(texture) });
         }
     }
 
@@ -761,6 +766,7 @@ export class ModelViewer {
 
     drawVisible(mode, edges) {
         if (this.hiddenObjects.size === 0 && (edges === true || this.textures.size === 0)) {
+            this.gl.uniform1i(this.locations.singleSided, false);
             this.gl.drawArrays(mode, 0, edges === true ? this.edges.count : this.surfaces.count);
             return;
         }
@@ -772,6 +778,7 @@ export class ModelViewer {
                 this.gl.activeTexture(this.gl.TEXTURE0);
                 this.gl.bindTexture(this.gl.TEXTURE_2D, texture?.handle || this.fallbackTexture);
                 this.gl.uniform1i(this.locations.hasTexture, texture !== undefined);
+                this.gl.uniform1i(this.locations.singleSided, texture?.singleSided === true);
                 this.gl.uniform1f(this.locations.alphaCutoff, texture?.alphaCutoff ?? -1);
                 for (const [index, channel] of ['normal', 'roughness', 'metallic', 'specular'].entries()) {
                     const handle = texture?.maps?.[channel];

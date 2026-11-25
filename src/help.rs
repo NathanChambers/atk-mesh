@@ -67,7 +67,7 @@ pub(super) fn execute(request: &Value) -> Result<Value, String> {
                 "check_moving_parts":["junction-review","independent-defect-diagnostics"],
                 "edit_materials":["uv-editing-and-vertex-painting","layered-textures-and-material-previews"],
                 "rig_and_animate":["rigging-and-animation"],
-                "export_assets":["export"],
+                "export_assets":["export","export-verification-and-workflow-reports"],
                 "report_cli_feedback":["cli-feedback"]
             },
             "read_topic":{"command":"help","topic":"minimal-example"},

@@ -105,7 +105,7 @@ fn material(
         }
     }
     let base_color = embed("base color", &base)?;
-    let mut material = json!({"name":name,"doubleSided":true,"pbrMetallicRoughness":{"baseColorTexture":base_color}});
+    let mut material = json!({"name":name,"doubleSided":texture.double_sided,"pbrMetallicRoughness":{"baseColorTexture":base_color}});
     if let Some(cutoff) = texture.alpha_cutoff {
         material["alphaMode"] = json!("MASK");
         material["alphaCutoff"] = json!(cutoff);
@@ -180,7 +180,7 @@ fn tangents(
         .collect()
 }
 
-pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility) -> Result<Vec<u8>, String> {
+pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility, merge: Option<&str>) -> Result<Vec<u8>, String> {
     let rig = mesh.rig.as_ref();
     let bones = rig.map_or(&[][..], |rig| rig.bones.as_slice());
     let mut buffer = Buffer::default();
@@ -227,14 +227,16 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
     let mut meshes = Vec::new();
     let mut materials = Vec::new();
     let mut images = Vec::new();
+    let mut image_textures = Vec::new();
+    let mut texture_samplers = Vec::new();
     let mut texture_materials = BTreeMap::new();
     let normals = normals::corners(mesh);
-    for object in mesh.objects.values() {
-        if !object.vertices.first().is_some_and(|v| visibility.includes_vertex(v)) {
-            continue;
-        }
+    for group in crate::export_groups::groups(mesh,visibility,merge)? {
+        let object = group.members[0].1;
+        let name = group.name;
+        let vertices = group.vertices();
         let mut groups = BTreeMap::<Option<&str>, Vec<_>>::new();
-        for (face_id, face) in mesh.faces.iter().filter(|(_, face)| object.vertices.contains(&face[0])) {
+        for (face_id, face) in mesh.faces.iter().filter(|(_, face)| vertices.contains(&face[0])) {
             let name = mesh.face_textures.get(face_id).map(String::as_str);
             let binding = name.filter(|_| crate::uv::complete(mesh, *face_id));
             groups.entry(binding).or_default().push((face_id, face));
@@ -318,7 +320,18 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
                     material
                 } else {
                     let index = materials.len();
-                    materials.push(material(name, &mesh.textures[name], &mut images, &mut buffer)?);
+                    let texture = &mesh.textures[name];
+                    let first = images.len();
+                    materials.push(material(name, texture, &mut images, &mut buffer)?);
+                    let sampler = match texture.filter.unwrap_or_default() {
+                        crate::uv::Filter::Nearest => json!({"magFilter":9728,"minFilter":9728}),
+                        crate::uv::Filter::Linear => json!({"magFilter":9729,"minFilter":9987}),
+                    };
+                    let sampler_index = texture_samplers.iter().position(|entry| entry == &sampler).unwrap_or_else(|| {
+                        texture_samplers.push(sampler);
+                        texture_samplers.len() - 1
+                    });
+                    image_textures.extend((first..images.len()).map(|source| json!({"sampler":sampler_index,"source":source})));
                     texture_materials.insert(name, index);
                     index
                 };
@@ -330,14 +343,17 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
             continue;
         }
         scene_nodes.push(nodes.len());
-        let mut node = json!({"name":object.name,"mesh":meshes.len()});
+        let mut node = json!({"name":name,"mesh":meshes.len()});
+        if group.grouped {
+            node["extras"] = json!({"sourcePivots":group.pivots()});
+        }
         if rig.is_some() {
             node["skin"] = json!(0);
         } else {
             node["translation"] = json!(object.origin);
         }
         nodes.push(node);
-        meshes.push(json!({"name":object.name,"primitives":primitives}));
+        meshes.push(json!({"name":name,"primitives":primitives}));
     }
 
     let mut animations = Vec::new();
@@ -350,13 +366,14 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
             let mut times = vec![0.0];
             times.extend(keys.iter().map(|key| key.time).filter(|time| *time > 0.0 && *time < clip.duration));
             times.push(clip.duration);
-            if mode == Interpolation::Cubic {
+            let bake_limit = mode != Interpolation::Step && bones[index].rotation_limit.is_some();
+            if mode == Interpolation::Cubic || bake_limit {
                 let mut baked = Vec::new();
                 for interval in times.windows(2) {
                     let span = interval[1] - interval[0];
                     let steps = (span * 60.0).ceil().max(1.0) as usize;
                     if baked.len().saturating_add(steps) > 200_000 {
-                        return Err("cubic GLB export exceeds 200,000 samples on one track".into());
+                        return Err("GLB track baking exceeds 200,000 samples on one track".into());
                     }
                     baked.extend((0..steps).map(|step| interval[0] + span * step as f64 / steps as f64));
                 }
@@ -371,7 +388,7 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
             let mut rotations = Vec::<[f64; 4]>::new();
             let mut translations = Vec::new();
             for time in times {
-                let (rotation, translation) = clip.track(bone, time);
+                let (rotation, translation) = bones[index].sample(clip, time);
                 let mut quaternion = rotation.0;
                 if rotations.last().is_some_and(|previous| previous.iter().zip(quaternion).map(|(a,b)| a*b).sum::<f64>() < 0.0) {
                     quaternion = quaternion.map(|value| -value);
@@ -408,8 +425,8 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility)
         if materials.iter().any(|material| material.get("extensions").is_some()) {
             document["extensionsUsed"] = json!(["KHR_materials_unlit"]);
         }
-        document["textures"] = json!((0..images.len()).map(|source| json!({"sampler":0,"source":source})).collect::<Vec<_>>());
-        document["samplers"] = json!([{"magFilter":9728,"minFilter":9728}]);
+        document["textures"] = json!(image_textures);
+        document["samplers"] = json!(texture_samplers);
         document["images"] = json!(images);
         document["materials"] = json!(materials);
     }

@@ -28,7 +28,7 @@ fn exact_corner_values_allow_seams_and_transactional_experimentation() {
         .execute(json!({"command":"uv_set","values":[{"face":2,"vertex":5,"uv":[-0.25,1.25]}]}))
         .unwrap();
     let saved = document.execute(json!({"command":"save"})).unwrap();
-    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["version"], 9);
     assert_eq!(saved["mesh"]["uvs"]["2"]["5"], json!([-0.25, 1.25]));
     assert_eq!(saved["mesh"]["uvs"]["3"]["5"], json!([0.1, 0.2]));
     let queried = document
@@ -320,7 +320,7 @@ fn texture_import_persistence_and_capture_evidence_follow_the_native_session() {
     let before = session.state();
     let project: Value =
         serde_json::from_slice(&std::fs::read(root.join("project.json")).unwrap()).unwrap();
-    assert_eq!(project["version"], 3);
+    assert_eq!(project["version"], 9);
     drop(session);
     std::fs::remove_file(root.join("test.png")).unwrap();
     let mut reopened = Session::open_workspace(root.clone()).unwrap();
@@ -340,4 +340,92 @@ fn texture_import_persistence_and_capture_evidence_follow_the_native_session() {
         .is_file()
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+fn exported_material(document: &mut Document) -> (Value, Value) {
+    let exported = document.execute(json!({"command":"export","format":"glb"})).unwrap();
+    let bytes = base64::decode(exported["glb_base64"].as_str().unwrap()).unwrap();
+    let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let glb: Value = serde_json::from_slice(&bytes[20..20 + length]).unwrap();
+    (glb["samplers"][0].clone(), glb["materials"][0]["doubleSided"].clone())
+}
+
+#[test]
+fn material_settings_preserve_legacy_filter_and_control_back_face_culling() {
+    let project: Value = serde_json::from_str(include_str!("fixtures/texturing/panel/project.json")).unwrap();
+    let mut panel = Document::empty();
+    panel.execute(json!({"command":"load","project":project})).unwrap();
+    let create = json!({"command":"texture_create","texture":"leaf","width":2,"height":2,"color":[1,1,1,1]});
+    let assign = json!({"command":"texture_assign","texture":"leaf"});
+    panel.execute(create.clone()).unwrap();
+    panel.execute(assign.clone()).unwrap();
+    assert_eq!(exported_material(&mut panel), (json!({"magFilter":9728,"minFilter":9728}), json!(true)));
+    let mut migrated = panel.execute(json!({"command":"save"})).unwrap();
+    migrated["version"] = json!(9);
+    let mut reopened = Document::empty();
+    reopened.execute(json!({"command":"load","project":migrated})).unwrap();
+    assert_eq!(exported_material(&mut reopened).0, json!({"magFilter":9729,"minFilter":9987}));
+    let back = json!({"command":"capture","mode":"material","yaw":180,"pitch":0,"zoom":200,"width":128,"height":128});
+    let center = |document: &mut Document| {
+        let capture = document.execute(back.clone()).unwrap();
+        let (width,pixels) = image(&capture);
+        pixels[(64 * width + 64) * 3..(64 * width + 64) * 3 + 3].to_vec()
+    };
+    assert_ne!(center(&mut panel), [232; 3]);
+    panel.execute(json!({"command":"texture_settings","texture":"leaf","filter":"linear","double_sided":false})).unwrap();
+    assert_eq!(center(&mut panel), [232; 3]);
+    let settings = (json!({"magFilter":9729,"minFilter":9987}), json!(false));
+    assert_eq!(exported_material(&mut panel), settings);
+    let saved = panel.execute(json!({"command":"save"})).unwrap();
+    panel.execute(json!({"command":"load","project":saved})).unwrap();
+    assert_eq!(exported_material(&mut panel), settings);
+
+    let mut modern = Document::default();
+    modern.execute(json!({"command":"uv_project","mode":"box"})).unwrap();
+    modern.execute(create).unwrap();
+    modern.execute(assign).unwrap();
+    assert_eq!(exported_material(&mut modern), (json!({"magFilter":9729,"minFilter":9987}), json!(true)));
+    modern.execute(json!({"command":"texture_settings","texture":"leaf","filter":"nearest"})).unwrap();
+    assert_eq!(exported_material(&mut modern).0, json!({"magFilter":9728,"minFilter":9728}));
+}
+
+#[test]
+fn capture_reports_depth_visible_orientation_and_projected_feature_width() {
+    let project: Value = serde_json::from_str(include_str!("fixtures/texturing/panel/project.json")).unwrap();
+    let mut document = Document::empty();
+    document.execute(json!({"command":"load","project":project})).unwrap();
+    let capture = |document: &mut Document, yaw, threshold| {
+        document.execute(json!({"command":"capture","mode":"orientation","yaw":yaw,"pitch":0,"width":100,"height":100,"zoom":120,"thin_feature_pixels":threshold})).unwrap()
+    };
+    let front = capture(&mut document, 0, 2);
+    let back = capture(&mut document, 180, 31);
+    assert_eq!(front["orientation"]["back_facing_ratio"], 0.0);
+    assert_eq!(back["orientation"]["back_facing_ratio"], 1.0);
+    assert_eq!(back["orientation"]["visible_pixels"], back["orientation"]["back_facing_pixels"]);
+    assert_eq!(front["thin_features"]["face_count"], 0);
+    assert_eq!(back["thin_features"]["face_count"], 1);
+    assert_eq!(back["thin_features"]["edge_count"], 4);
+    let empty = document.execute(json!({"command":"capture","mode":"orientation","solo_objects":[]})).unwrap();
+    assert_eq!(empty["orientation"]["visible_pixels"], 0);
+    assert!(empty["orientation"]["back_facing_ratio"].is_null());
+}
+
+#[test]
+fn minified_linear_material_matches_the_average_of_a_repeating_checker() {
+    let mut document = Document::default();
+    front_uvs(&mut document);
+    document.execute(json!({"command":"uv_transform","faces":[2],"scale":[180,180]})).unwrap();
+    let checker: Vec<u8> = (0..64).flat_map(|index| {
+        if (index/8 + index%8)%2 == 0 { [255,0,0,255] } else { [0,0,255,255] }
+    }).collect();
+    document.execute(json!({"command":"texture_define","name":"pattern","width":8,"height":8,"rgba_base64":base64::encode(&checker)})).unwrap();
+    document.execute(json!({"command":"texture_assign","texture":"pattern","faces":[2]})).unwrap();
+    let camera = json!({"command":"capture","mode":"material","width":100,"height":100,"yaw":0,"pitch":0,"zoom":200});
+    let linear = image(&document.execute(camera.clone()).unwrap()).1;
+    document.execute(json!({"command":"texture_settings","texture":"pattern","filter":"nearest"})).unwrap();
+    let nearest = image(&document.execute(camera.clone()).unwrap()).1;
+    assert_ne!(nearest,linear);
+    document.execute(json!({"command":"texture_define","name":"pattern","width":1,"height":1,"rgba_base64":base64::encode(&[128,0,128,255])})).unwrap();
+    let average = image(&document.execute(camera).unwrap()).1;
+    assert_eq!(linear,average);
 }

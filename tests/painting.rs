@@ -31,7 +31,7 @@ fn layered_composites_are_repeatable_editable_and_transactional() {
     define(&mut document);
     document.execute(json!({"command":"texture_layer_add","texture":"paint","layer":{"name":"red","color":[1,0,0,1],"opacity":0.5}})).unwrap();
     let before = save(&mut document);
-    assert_eq!(before["version"], 4);
+    assert_eq!(before["version"], 9);
     assert_eq!(&bytes(&before, "base_color")[..4], &[128, 0, 128, 255]);
     document
         .execute(json!({"command":"texture_bake","texture":"paint"}))
@@ -219,7 +219,7 @@ fn one_damage_mask_updates_material_channels_and_derived_rim_together() {
         .execute(json!({"command":"texture_normal_from_height","texture":"paint","strength":2}))
         .unwrap();
     let original = save(&mut document);
-    assert_eq!(original["version"], 5);
+    assert_eq!(original["version"], 9);
     let inside = (10 * 16 + 5) * 4;
     let outside = (10 * 16 + 10) * 4;
     let rim = (10 * 16 + 8) * 4;
@@ -363,7 +363,7 @@ fn shared_masks_and_material_bundles_survive_workspace_reopening() {
     assert_eq!(query["result"]["next_offset"], 1);
     let project: Value =
         serde_json::from_slice(&std::fs::read(root.join("project.json")).unwrap()).unwrap();
-    assert_eq!(project["version"], 5);
+    assert_eq!(project["version"], 9);
     drop(session);
     let mut reopened = Session::open_workspace(root.clone()).unwrap();
     assert_eq!(reopened.state()["mesh"], before["mesh"]);

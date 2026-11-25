@@ -462,6 +462,7 @@ fn project(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
             mesh.uvs.entry(*face).or_default().insert(vertex, mapped);
             count += 1;
         }
+        mesh.projection_regions.insert(*face, region);
     }
     Ok(
         json!({"assigned_corners":count,"face_count":targets.len(),"mode":mode,"bounds":bounds,"region":region,"section_count":section_count}),

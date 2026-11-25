@@ -8,8 +8,51 @@ pub struct MeshInstance {
     pub master: u64,
     pub anchor: [f64; 3],
     pub rotation: [[f64; 3]; 3],
+    #[serde(default = "unit_scale", skip_serializing_if = "is_unit_scale")]
+    pub scale: [f64; 3],
+    #[serde(default = "identity", skip_serializing_if = "is_identity")]
+    pub master_basis: [[f64; 3]; 3],
     pub vertices: BTreeMap<u64, u64>,
     pub faces: BTreeMap<u64, u64>,
+}
+
+fn unit_scale() -> [f64; 3] {
+    [1.0; 3]
+}
+fn is_unit_scale(value: &[f64; 3]) -> bool {
+    *value == unit_scale()
+}
+fn identity() -> [[f64; 3]; 3] {
+    [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
+}
+fn is_identity(value: &[[f64; 3]; 3]) -> bool {
+    *value == identity()
+}
+
+fn scale_value(value: &Value) -> Result<[f64; 3], String> {
+    let scale = if let Some(number) = value.as_f64() {
+        [number; 3]
+    } else {
+        vector(value)?
+    };
+    if scale.iter().any(|v| !v.is_finite() || *v <= 0.) {
+        return Err("instance scale must contain positive finite factors".into());
+    }
+    Ok(scale)
+}
+
+impl MeshInstance {
+    pub(crate) fn transform_direction(&self, point: [f64; 3], normal: bool) -> [f64; 3] {
+        let local = rotated(&self.master_basis, point);
+        let scaled = std::array::from_fn(|i| {
+            if normal {
+                local[i] / self.scale[i]
+            } else {
+                local[i] * self.scale[i]
+            }
+        });
+        rotated(&self.rotation, scaled)
+    }
 }
 
 fn rotated(rotation: &[[f64; 3]; 3], point: [f64; 3]) -> [f64; 3] {
@@ -64,11 +107,42 @@ pub(super) fn create(mesh: &mut Mesh, master: u64, request: &Value) -> Result<Va
     object.instance = Some(MeshInstance {
         master,
         anchor: object.origin,
+        scale: request
+            .get("scale")
+            .map(scale_value)
+            .transpose()?
+            .unwrap_or_else(unit_scale),
+        master_basis: identity(),
         rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         vertices,
         faces,
     });
     Ok(json!({"object":id,"master_object":master,"linked":true}))
+}
+
+fn validate_rotation(rotation: [[f64; 3]; 3]) -> Result<(), String> {
+    if rotation.iter().flatten().any(|value| !value.is_finite()) {
+        return Err("instance rotation must be finite".into());
+    }
+    for row in 0..3 {
+        for other in 0..3 {
+            let dot: f64 = (0..3)
+                .map(|axis| rotation[row][axis] * rotation[other][axis])
+                .sum();
+            if (dot - if row == other { 1.0 } else { 0.0 }).abs() > 1e-8 {
+                return Err("instance rotation must be orthonormal".into());
+            }
+        }
+    }
+
+    let determinant = rotation[0][0]
+        * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
+        - rotation[0][1] * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
+        + rotation[0][2] * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0]);
+    if (determinant - 1.0).abs() > 1e-8 {
+        return Err("instance rotation must preserve winding".into());
+    }
+    Ok(())
 }
 
 fn canonical_face(vertices: &[u64]) -> Vec<u64> {
@@ -114,6 +188,7 @@ pub(super) fn link_existing(mesh: &mut Mesh, id: u64, request: &Value) -> Result
         .transpose()?
         .unwrap_or([0.0; 3]);
     let rotation = rotation_matrix(angles);
+    let scale = request.get("scale").map(scale_value).transpose()?.unwrap_or_else(unit_scale);
     let center = |vertices: &BTreeSet<u64>| -> [f64; 3] {
         std::array::from_fn(|axis| {
             vertices
@@ -124,11 +199,11 @@ pub(super) fn link_existing(mesh: &mut Mesh, id: u64, request: &Value) -> Result
     };
     let source_center = center(&source.vertices);
     let target_center = center(&target.vertices);
-    let local = std::array::from_fn(|axis| source_center[axis] - source.origin[axis]);
+    let local = std::array::from_fn(|axis| (source_center[axis] - source.origin[axis]) * scale[axis]);
     let offset = rotated(&rotation, local);
     let anchor = std::array::from_fn(|axis| target_center[axis] - offset[axis]);
     let position = |vertex: &u64| -> [f64; 3] {
-        let local = std::array::from_fn(|axis| mesh.vertices[vertex][axis] - source.origin[axis]);
+        let local = std::array::from_fn(|axis| (mesh.vertices[vertex][axis] - source.origin[axis]) * scale[axis]);
         let local = rotated(&rotation, local);
         std::array::from_fn(|axis| anchor[axis] + local[axis])
     };
@@ -215,6 +290,8 @@ pub(super) fn link_existing(mesh: &mut Mesh, id: u64, request: &Value) -> Result
         master,
         anchor,
         rotation,
+        scale,
+        master_basis: identity(),
         vertices,
         faces,
     });
@@ -234,6 +311,18 @@ pub(super) fn placement(
         return Ok(());
     };
     match command {
+        "object_scale" => {
+            let factors = scale_value(&request["value"])?;
+            let delta = std::array::from_fn(|axis| link.anchor[axis] - origin[axis]);
+            let inverse = std::array::from_fn(|i| std::array::from_fn(|j| link.rotation[j][i]));
+            let local = rotated(&inverse, delta);
+            let delta = rotated(
+                &link.rotation,
+                std::array::from_fn(|i| local[i] * factors[i]),
+            );
+            link.anchor = std::array::from_fn(|i| origin[i] + delta[i]);
+            link.scale = std::array::from_fn(|i| link.scale[i] * factors[i]);
+        }
         "object_move" => {
             let delta = vector(&request["value"])?;
             for (axis, value) in delta.iter().enumerate() {
@@ -315,6 +404,9 @@ pub(super) fn finish(before: &Mesh, mesh: &mut Mesh, request: &Value) -> Result<
         .collect();
     for id in ids {
         let mut link = mesh.objects[&id].instance.clone().unwrap();
+        if link.scale.iter().any(|v| !v.is_finite() || *v <= 0.) {
+            return Err("instance scale must contain positive finite factors".into());
+        }
         let source = mesh
             .objects
             .get(&link.master)
@@ -323,32 +415,11 @@ pub(super) fn finish(before: &Mesh, mesh: &mut Mesh, request: &Value) -> Result<
         if source.instance.is_some() || link.master == id {
             return Err("instance master must be an independent object".into());
         }
-        if link
-            .anchor
-            .iter()
-            .chain(link.rotation.iter().flatten())
-            .any(|value| !value.is_finite())
-        {
-            return Err("instance transform must be finite".into());
+        if link.anchor.iter().any(|value| !value.is_finite()) {
+            return Err("instance anchor must be finite".into());
         }
-        for row in 0..3 {
-            for other in 0..3 {
-                let dot: f64 = (0..3)
-                    .map(|axis| link.rotation[row][axis] * link.rotation[other][axis])
-                    .sum();
-                if (dot - if row == other { 1.0 } else { 0.0 }).abs() > 1e-8 {
-                    return Err("instance rotation must be orthonormal".into());
-                }
-            }
-        }
-        let rotation = link.rotation;
-        let determinant = rotation[0][0]
-            * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
-            - rotation[0][1] * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
-            + rotation[0][2] * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0]);
-        if (determinant - 1.0).abs() > 1e-8 {
-            return Err("instance rotation must preserve winding".into());
-        }
+        validate_rotation(link.rotation)?;
+        validate_rotation(link.master_basis)?;
         let mapped: BTreeSet<_> = link.vertices.values().copied().collect();
         if mapped.len() != link.vertices.len() || mapped != mesh.objects[&id].vertices {
             return Err("invalid instance vertex mapping".into());
@@ -373,12 +444,16 @@ pub(super) fn finish(before: &Mesh, mesh: &mut Mesh, request: &Value) -> Result<
             let rotation = rotation_matrix(angles);
             let inverse =
                 std::array::from_fn(|row| std::array::from_fn(|column| rotation[column][row]));
-            link.rotation = multiply(link.rotation, inverse);
+            if is_unit_scale(&link.scale) && is_identity(&link.master_basis) {
+                link.rotation = multiply(link.rotation, inverse);
+            } else {
+                link.master_basis = multiply(link.master_basis, inverse);
+            }
         }
         if command == "object_set_origin" && request["object"].as_u64() == Some(link.master) {
             let previous = before.objects[&link.master].origin;
             let delta = std::array::from_fn(|axis| source.origin[axis] - previous[axis]);
-            let delta = rotated(&link.rotation, delta);
+            let delta = link.transform_direction(delta, false);
             for (axis, value) in delta.iter().enumerate() {
                 link.anchor[axis] += value;
             }
@@ -414,7 +489,7 @@ pub(super) fn finish(before: &Mesh, mesh: &mut Mesh, request: &Value) -> Result<
             }
             let local =
                 std::array::from_fn(|axis| mesh.vertices[vertex][axis] - source.origin[axis]);
-            let local = rotated(&link.rotation, local);
+            let local = link.transform_direction(local, false);
             let point = std::array::from_fn(|axis| link.anchor[axis] + local[axis]);
             let destination = link.vertices[vertex];
             if command == "load"
@@ -521,6 +596,7 @@ pub(super) fn query(mesh: &Mesh, request: &Value, revision: u64) -> Result<Value
     result["revision"] = json!(revision);
     result["object"] = json!(id);
     result["master_object"] = json!(link.master);
+    result["placement"] = json!({"anchor":link.anchor,"rotation":link.rotation,"scale":link.scale,"master_basis":link.master_basis});
     result["mapping"] = json!("master ID to instance ID");
     Ok(result)
 }

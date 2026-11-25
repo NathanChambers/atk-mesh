@@ -3,8 +3,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Filter {
+    #[default]
+    Nearest,
+    Linear,
+}
+
+fn is_true(value: &bool) -> bool { *value }
+
+fn default_double_sided() -> bool { true }
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Texture {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Filter>,
+    #[serde(default = "default_double_sided", skip_serializing_if = "is_true")]
+    pub double_sided: bool,
     pub width: usize,
     pub height: usize,
     pub rgba_base64: String,
@@ -54,6 +70,17 @@ pub(super) fn faces(mesh: &Mesh, request: &Value) -> Result<Vec<u64>, String> {
 }
 
 pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
+    if command == "texture_settings" {
+        let name = request["texture"].as_str().ok_or("texture is required")?;
+        let texture = mesh.textures.get_mut(name).ok_or("unknown texture")?;
+        if let Some(filter) = request.get("filter") {
+            texture.filter = Some(serde_json::from_value(filter.clone()).map_err(|_| "filter must be nearest or linear")?);
+        }
+        if let Some(value) = request.get("double_sided") {
+            texture.double_sided = value.as_bool().ok_or("double_sided must be boolean")?;
+        }
+        return Ok(json!({"texture":name,"filter":texture.filter.unwrap_or_default(),"double_sided":texture.double_sided}));
+    }
     if command == "texture_define" {
         if request.get("object").is_some() {
             return Err("texture definitions are project resources; omit object".into());
@@ -62,8 +89,17 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             .as_str()
             .filter(|name| !name.trim().is_empty() && name.len() <= 128)
             .ok_or("name must contain 1..128 bytes")?;
-        let texture: Texture = serde_json::from_value(request.clone())
+        if request.get("filter").is_some_and(Value::is_null) {
+            return Err("filter must be nearest or linear".into());
+        }
+        let mut texture: Texture = serde_json::from_value(request.clone())
             .map_err(|_| "texture requires width, height, rgba_base64 and an optional numeric alpha_cutoff")?;
+        if request.get("filter").is_none() {
+            texture.filter = mesh.textures.get(name).and_then(|old| old.filter).or_else(|| mesh.modern_material_defaults.then_some(Filter::Linear));
+        }
+        if request.get("double_sided").is_none() {
+            texture.double_sided = mesh.textures.get(name).is_none_or(|old| old.double_sided);
+        }
         pixels(&texture)?;
         let total: usize = mesh
             .textures
@@ -241,7 +277,11 @@ pub(super) fn complete(mesh: &Mesh, face: u64) -> bool {
 pub(super) fn query(mesh: &Mesh, request: &Value, revision: u64) -> Result<Value, String> {
     let (offset, limit) = crate::responses::page(request)?;
     if request["kind"] == "textures" {
-        let items: Vec<_> = mesh.textures.iter().skip(offset).take(limit).map(|(name, texture)| json!({"texture":name,"width":texture.width,"height":texture.height,"bytes":texture.width*texture.height*4,"channels":texture.maps.keys().collect::<Vec<_>>(),"layers":texture.paint.as_ref().map_or(0,|paint|paint.layers.len())})).collect();
+        let mut open_materials = BTreeSet::new();
+        for incident in crate::surface_ops::edges(mesh,None).values().filter(|faces| faces.len() == 1) {
+            if let Some(name) = mesh.face_textures.get(&incident[0].0) { open_materials.insert(name.clone()); }
+        }
+        let items: Vec<_> = mesh.textures.iter().skip(offset).take(limit).map(|(name, texture)| json!({"texture":name,"width":texture.width,"height":texture.height,"filter":texture.filter.unwrap_or_default(),"double_sided":texture.double_sided,"suggested_double_sided":open_materials.contains(name),"bytes":texture.width*texture.height*4,"channels":texture.maps.keys().collect::<Vec<_>>(),"layers":texture.paint.as_ref().map_or(0,|paint|paint.layers.len())})).collect();
         let next = offset.saturating_add(limit);
         return Ok(
             json!({"revision":revision,"items":items,"total":mesh.textures.len(),"offset":offset,"next_offset":if next < mesh.textures.len() {Some(next)} else {None}}),
@@ -307,6 +347,7 @@ pub(super) fn inspect(mesh: &Mesh, request: &Value, revision: u64) -> Result<Val
 }
 
 pub(super) fn reconcile(mesh: &mut Mesh) {
+    mesh.projection_regions.retain(|face, _| mesh.faces.contains_key(face));
     mesh.vertex_colors
         .retain(|id, _| mesh.vertices.contains_key(id));
     mesh.uvs.retain(|face, values| {
@@ -326,6 +367,15 @@ pub(super) fn copy_face(
     destination: u64,
     vertices: &BTreeMap<u64, u64>,
 ) {
+    let region = mesh.projection_regions.get(&source).copied().or_else(|| {
+        mesh.components.values().filter(|component| component.faces.contains(&source))
+            .find_map(|component| crate::construction::generator_uv::expected_region(component, source))
+    });
+    if let Some(rect) = region {
+        mesh.projection_regions.insert(destination, rect);
+    } else {
+        mesh.projection_regions.remove(&destination);
+    }
     if let Some(uvs) = mesh.uvs.get(&source) {
         let copied = uvs
             .iter()
@@ -343,6 +393,11 @@ pub(super) fn copy_face(
 }
 
 pub(super) fn validate(mesh: &Mesh) -> Result<(), String> {
+    for (face, rect) in &mesh.projection_regions {
+        if !mesh.faces.contains_key(face) || rect.iter().any(|n| !n.is_finite()) || rect[0]>=rect[2] || rect[1]>=rect[3] {
+            return Err("invalid projection region".into());
+        }
+    }
     for (face, values) in &mesh.uvs {
         let vertices = mesh
             .faces
@@ -432,6 +487,8 @@ pub(super) fn import_png(bytes: &[u8]) -> Result<Texture, String> {
         rgba.extend(value);
     }
     Ok(Texture {
+        filter: None,
+        double_sided: true,
         width,
         height,
         rgba_base64: base64::encode(&rgba),

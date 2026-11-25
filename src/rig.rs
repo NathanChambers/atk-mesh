@@ -11,6 +11,16 @@ pub(super) struct Bone {
     pub(super) position: [f64; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) tail: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) rotation_limit: Option<RotationLimit>,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RotationLimit {
+    axis: [f64; 3],
+    max_swing: f64,
+    twist: [f64; 2],
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -59,6 +69,49 @@ impl Clip {
         self.tracks.get(bone).map_or((Rotation::IDENTITY, [0.0; 3]), |keys| {
             sample_track(keys, self.interpolation(bone), time)
         })
+    }
+}
+
+impl Bone {
+    pub(super) fn sample(&self, clip: &Clip, time: f64) -> (Rotation, [f64; 3]) {
+        let (rotation, translation) = clip.track(&self.name, time);
+        let rotation = self.rotation_limit.map_or(rotation, |limit| limit.apply(rotation));
+        (rotation, translation)
+    }
+}
+
+impl RotationLimit {
+    fn apply(self, rotation: Rotation) -> Rotation {
+        let axis = mul(self.axis, 1.0 / length(self.axis));
+        let [x, y, z, w] = rotation.0;
+        let sign = if w < 0.0 { -1.0 } else { 1.0 };
+        let projection = sign * dot(axis, [x, y, z]);
+        let scalar = sign * w;
+        let twist_angle = if projection.hypot(scalar) < 1e-12 {
+            0.0
+        } else {
+            2.0 * projection.atan2(scalar)
+        };
+        let twist = |angle: f64| {
+            let (sine, cosine) = (angle * 0.5).sin_cos();
+            Rotation([axis[0] * sine, axis[1] * sine, axis[2] * sine, cosine])
+        };
+
+        let swing = rotation.compose(twist(twist_angle).inverse());
+        let [x, y, z, w] = swing.0;
+        let swing_angle = 2.0 * length([x, y, z]).atan2(w.abs());
+        let swing_limit = self.max_swing.to_radians();
+        let twist_limit = twist_angle.clamp(self.twist[0].to_radians(), self.twist[1].to_radians());
+        if swing_angle <= swing_limit && twist_angle == twist_limit {
+            return rotation;
+        }
+
+        let swing = if swing_angle > swing_limit {
+            Rotation::IDENTITY.interpolate(swing, swing_limit / swing_angle)
+        } else {
+            swing
+        };
+        swing.compose(twist(twist_limit))
     }
 }
 
@@ -193,7 +246,7 @@ fn sample_joints<'a>(rig: &'a Rig, clip: &Clip, time: f64) -> BTreeMap<&'a str, 
     let mut joints = BTreeMap::new();
     for bone in &rig.bones {
         let parent = bone.parent.as_deref().map_or(&world, |name| &joints[name]);
-        let (rotation, translation) = clip.track(&bone.name, time);
+        let (rotation, translation) = bone.sample(clip, time);
         let offset = add(sub(bone.position, parent.rest), translation);
         let origin = add(parent.origin, parent.rotation.rotate(offset));
         joints.insert(bone.name.as_str(), Joint {
@@ -264,6 +317,15 @@ pub(super) fn validate(mesh: &Mesh) -> Result<(), String> {
             let distance = length(sub(tail, bone.position));
             if !distance.is_finite() || distance <= 0.0 {
                 return Err(format!("display tail of {} must be finite and distinct from its pivot", bone.name));
+            }
+        }
+        if let Some(limit) = bone.rotation_limit {
+            let axis_length = length(limit.axis);
+            let [minimum, maximum] = limit.twist;
+            let valid_axis = axis_length.is_finite() && axis_length > 1e-9;
+            let valid_twist = (-180.0..=0.0).contains(&minimum) && (0.0..=180.0).contains(&maximum);
+            if !valid_axis || !valid_twist || !(0.0..=180.0).contains(&limit.max_swing) {
+                return Err(format!("invalid rotation limit for {}: require a nonzero axis, swing in 0..180 and twist bounds spanning zero in -180..180", bone.name));
             }
         }
         names.insert(bone.name.as_str());
@@ -341,7 +403,7 @@ pub(super) fn sample_query(mesh: &Mesh, request: &Value, revision: u64) -> Resul
                 .filter(|bone| names.as_ref().is_none_or(|names| names.contains(&bone.name)));
             let page: Vec<_> = items.clone().skip(offset).take(limit).map(|bone| {
                 let joint = joints[bone.name.as_str()];
-                let (rotation, translation) = clip.track(&bone.name, sampled_time);
+                let (rotation, translation) = bone.sample(clip, sampled_time);
                 let parent_rest = bone.parent.as_deref().map_or([0.0; 3], |name| joints[name].rest);
                 let local = add(sub(bone.position, parent_rest), translation);
                 json!({"name":bone.name,"parent":bone.parent,"position":joint.origin,
@@ -476,7 +538,7 @@ fn bake_ik(rig: &mut Rig, name: &str, request: &Value) -> Result<Value, String> 
         let pivot = joints[root].origin;
         let target = sub(input.target, pivot);
         let distance = length(target);
-        let (middle_local, middle_translation) = clip.track(middle, time);
+        let (middle_local, middle_translation) = middle_bone.sample(clip, time);
         let (_, tip_translation) = clip.track(tip, time);
         let upper = add(sub(middle_bone.position, root_bone.position), middle_translation);
         let lower = add(sub(tip_bone.position, middle_bone.position), tip_translation);
@@ -493,9 +555,6 @@ fn bake_ik(rig: &mut Rig, name: &str, request: &Value) -> Result<Value, String> 
             return Err("IK pole must be off the root-to-target axis".into());
         }
         let reach = distance.clamp((upper_length - lower_length).abs().max(1e-9), upper_length + lower_length);
-        let error = (reach - distance).abs();
-        max_error = max_error.max(error);
-        clamped += usize::from(error > 1e-8);
         let along = (upper_length * upper_length - lower_length * lower_length + reach * reach) / (2.0 * reach);
         let across = (upper_length * upper_length - along * along).max(0.0).sqrt();
         let elbow = add(mul(direction, along), mul(bend, across / bend_length));
@@ -505,6 +564,12 @@ fn bake_ik(rig: &mut Rig, name: &str, request: &Value) -> Result<Value, String> 
         let middle_world = Rotation::from_to(middle_guess.rotate(lower), forearm, bend).compose(middle_guess);
         let tip_world = input.tip_rotation.map_or(joints[tip].rotation, Rotation::xyz);
         let rotations = [parent.inverse().compose(root_world), root_world.inverse().compose(middle_world), middle_world.inverse().compose(tip_world)];
+        let posed_root = parent.compose(root_bone.rotation_limit.map_or(rotations[0], |limit| limit.apply(rotations[0])));
+        let posed_middle = posed_root.compose(middle_bone.rotation_limit.map_or(rotations[1], |limit| limit.apply(rotations[1])));
+        let posed_target = add(posed_root.rotate(upper), posed_middle.rotate(lower));
+        let error = length(sub(posed_target, target));
+        max_error = max_error.max(error);
+        clamped += usize::from(error > 1e-8);
         for (index, bone) in [root, middle, tip].into_iter().enumerate() {
             baked[index].push(Keyframe {
                 time,
@@ -554,6 +619,16 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                 let bone = rig.bones.iter_mut().find(|bone| bone.name == name)
                     .ok_or_else(|| format!("unknown bone {name}"))?;
                 bone.tail = tail;
+            }
+        }
+        "rig_rotation_limits_set" => {
+            let rig = mesh.rig.as_mut().ok_or("define a rig first")?;
+            let limits: BTreeMap<String, Option<RotationLimit>> =
+                serde_json::from_value(request["limits"].clone()).map_err(|error| error.to_string())?;
+            for (name, limit) in limits {
+                let bone = rig.bones.iter_mut().find(|bone| bone.name == name)
+                    .ok_or_else(|| format!("unknown bone {name}"))?;
+                bone.rotation_limit = limit;
             }
         }
         "skin_weights_set" => {

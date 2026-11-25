@@ -14,6 +14,7 @@ mod comparison;
 mod connected;
 mod construction;
 mod diagnostics;
+mod export_groups;
 mod fbx;
 mod fbx_import;
 mod geometry;
@@ -28,6 +29,7 @@ mod normal_bake;
 mod object_review;
 mod objects;
 mod paint_masks;
+mod physical_constraints;
 mod painting;
 mod profiles;
 mod projection;
@@ -44,17 +46,21 @@ mod solid;
 mod subdivision;
 mod surface;
 mod surface_ops;
+mod source_metrics;
 mod surface_paint;
 mod sweep;
 mod topology;
 mod transactions;
 mod patches;
+pub mod feedback;
 mod uv;
 mod vertex_colors;
 mod workflow;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Mesh {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) modern_material_defaults: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rig: Option<rig::Rig>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -71,6 +77,8 @@ pub struct Mesh {
     pub vertex_colors: BTreeMap<u64, [f64; 3]>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub uvs: BTreeMap<u64, BTreeMap<u64, [f64; 2]>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) projection_regions: BTreeMap<u64, [f64; 4]>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub textures: BTreeMap<String, uv::Texture>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -149,7 +157,7 @@ impl Default for Document {
 impl Document {
     pub fn empty() -> Self {
         Self {
-            mesh: Mesh::default(),
+            mesh: Mesh { modern_material_defaults: true, ..Mesh::default() },
             revision: 0,
             undo: vec![],
             redo: vec![],
@@ -164,6 +172,7 @@ impl Document {
     }
 
     pub(crate) fn project_version(&self) -> u64 {
+        if self.mesh.modern_material_defaults { return 9; }
         if self.mesh.textures.values().any(paint_masks::has_surface_masks) {
             return 8;
         }
@@ -221,7 +230,11 @@ impl Document {
                 Ok(json!({"object":id,"stage":object.stage,"checks":object.review}))
             }
             "transaction" => transactions::execute(self, &request),
-            "inspect" => Ok(self.inspect()),
+            "inspect" => {
+                let mut result = self.inspect();
+                result["source_metrics"] = source_metrics::inspect(&self.mesh, &request)?;
+                Ok(result)
+            }
             "query_components" => construction::query(&self.mesh, &request, self.revision),
             "query_constructions" => responses::slice(&json!(self.mesh.constructions), &request),
             "query_boundaries" => {
@@ -257,18 +270,22 @@ impl Document {
                     return Err("cannot export an empty scene; create or import geometry first".into());
                 }
                 let format = request["format"].as_str().unwrap_or("obj");
+                let merge = request.get("merge").map(|value| value.as_str().ok_or("merge must be all or collection")).transpose()?;
+                if merge.is_some() && !matches!(format, "glb" | "obj" | "fbx") {
+                    return Err("export merge requires GLB, OBJ or FBX".into());
+                }
                 let filtered = ["solo_objects", "hide_objects", "solo_collections", "hide_collections"].iter().any(|key| request.get(key).is_some());
                 if filtered && format != "glb" {
                     return Err("export visibility filters currently require format glb".into());
                 }
                 let visibility = render::CaptureVisibility::parse(&request, &self.mesh)?;
                 let mut result = match format {
-                    "obj" => json!({"obj": self.export_obj()}),
+                    "obj" => json!({"obj": self.export_obj(&visibility, merge)?}),
                     "fbx" => {
-                        json!({"fbx_base64": base64::encode(&fbx::export(&self.mesh)?),"format":"fbx","version":7400,"unit":"meter","up_axis":"Y"})
+                        json!({"fbx_base64": base64::encode(&fbx::export(&self.mesh, &visibility, merge)?),"format":"fbx","version":7400,"unit":"meter","up_axis":"Y"})
                     }
                     "glb" => {
-                        json!({"glb_base64": base64::encode(&animated_glb::export(&self.mesh, &visibility)?),"format":"glb","version":2,"unit":"meter","up_axis":"Y"})
+                        json!({"glb_base64": base64::encode(&animated_glb::export(&self.mesh, &visibility, merge)?),"format":"glb","version":2,"unit":"meter","up_axis":"Y"})
                     }
                     "stl" => {
                         json!({"stl_base64": base64::encode(&stl::export(&self.mesh)?),"format":"stl","unit":"millimeter","up_axis":"Z"})
@@ -379,7 +396,7 @@ impl Document {
         if command.starts_with("collection_")
             || command == "select_collection"
             || command == "query_mesh"
-            || matches!(command, "object_move" | "object_rotate" | "shade_smooth")
+            || matches!(command, "object_move" | "object_rotate" | "object_scale" | "shade_smooth")
         {
             return Ok(request);
         }
@@ -402,7 +419,7 @@ impl Document {
     }
 
     fn edit(&mut self, command: &str, request: &Value) -> Result<Option<Value>, String> {
-        if matches!(command, "rig_set" | "rig_clear" | "rig_display_tails_set" | "skin_weights_set" | "animation_set" | "animation_update" | "animation_remove" | "animation_track_set" | "animation_track_remove" | "animation_keys_edit" | "animation_ik_bake") {
+        if matches!(command, "rig_set" | "rig_clear" | "rig_display_tails_set" | "rig_rotation_limits_set" | "skin_weights_set" | "animation_set" | "animation_update" | "animation_remove" | "animation_track_set" | "animation_track_remove" | "animation_keys_edit" | "animation_ik_bake") {
             return rig::edit(&mut self.mesh, command, request).map(Some);
         }
         if command != "load" && command != "cube" {
@@ -462,6 +479,7 @@ impl Document {
                 | "uv_clear"
                 | "uv_transform"
                 | "texture_define"
+                | "texture_settings"
                 | "texture_assign"
                 | "texture_remove"
         ) {
@@ -471,7 +489,7 @@ impl Document {
             return collections::edit(&mut self.mesh, command, request).map(Some);
         }
         if let Some(collection) = request.get("collection")
-            && matches!(command, "object_move" | "object_rotate" | "shade_smooth")
+            && matches!(command, "object_move" | "object_rotate" | "object_scale" | "shade_smooth")
         {
             if request.get("object").is_some() {
                 return Err("use collection or object, not both".into());
@@ -616,7 +634,11 @@ impl Document {
                     json!({"vertices":vertices,"delta_pixels":delta,"displacement":displacement,"depth_preserved":true,"anchor":anchor}),
                 ));
             }
-            "cube" => self.mesh = cube(),
+            "cube" => {
+                let defaults = self.mesh.modern_material_defaults;
+                self.mesh = cube();
+                self.mesh.modern_material_defaults = defaults;
+            }
             "load" => {
                 if request["project"]["version"] != 1
                     && request["project"]["version"] != 2
@@ -626,11 +648,18 @@ impl Document {
                     && request["project"]["version"] != 6
                     && request["project"]["version"] != 7
                     && request["project"]["version"] != 8
+                    && request["project"]["version"] != 9
                 {
                     return Err("unsupported project version".into());
                 }
                 self.mesh = serde_json::from_value(request["project"]["mesh"].clone())
                     .map_err(|e| e.to_string())?;
+                self.mesh.modern_material_defaults = request["project"]["version"] == 9;
+                if self.mesh.modern_material_defaults {
+                    for texture in self.mesh.textures.values_mut() {
+                        texture.filter.get_or_insert(uv::Filter::Linear);
+                    }
+                }
                 objects::normalize_legacy_stages(&mut self.mesh);
                 if request["project"]["version"] == 1 {
                     objects::initialize(&mut self.mesh);
@@ -760,6 +789,7 @@ impl Document {
             | "object_review_plan"
             | "object_review_check"
             | "object_move"
+            | "object_scale"
             | "object_rotate"
             | "object_rename"
             | "object_instance"
@@ -821,26 +851,13 @@ impl Document {
 
     fn render_mesh_view(&self, mesh: &Mesh, request: &Value) -> Result<(Value, View), String> {
         let options = render::Options::parse(request)?;
-        let camera = projection::Camera::parse(request)?;
-        let visibility = render::CaptureVisibility::parse(request, mesh)?;
-        let mut view = View {
-            revision: self.revision,
-            points: BTreeMap::new(),
-            camera: camera.clone(),
-            visibility,
-        };
-        for (id, p) in &mesh.vertices {
-            if view.visibility.includes_vertex(id) && camera.contains(*p) {
-                let point = camera.raster_point(*p)?;
-                view.points.insert(*id, point);
-            }
-        }
+        let view = View::project(mesh, request, self.revision)?;
         let mut result = render::capture(mesh, &view, &options)?;
         result["visibility"] = view.visibility.metadata();
         result["revision"] = json!(self.revision);
         result["width"] = json!(options.width);
         result["height"] = json!(options.height);
-        result["camera"] = camera.metadata();
+        result["camera"] = view.camera.metadata();
         result["objects"] = json!(mesh.objects);
         Ok((result, view))
     }
@@ -868,7 +885,12 @@ impl Document {
         Ok(result)
     }
 
-    fn export_obj(&self) -> String {
+    fn export_obj(
+        &self,
+        visibility: &render::CaptureVisibility,
+        merge: Option<&str>,
+    ) -> Result<String, String> {
+        let groups = export_groups::groups(&self.mesh, visibility, merge)?;
         let mut output = String::new();
         let mut indices = BTreeMap::new();
         for (index, (id, p)) in self.mesh.vertices.iter().enumerate() {
@@ -886,30 +908,56 @@ impl Document {
                 output.push_str(&format!("vt {} {}\n", uv[0], uv[1]));
             }
         }
-        for object in self.mesh.objects.values() {
+        let mut normal_indices = BTreeMap::new();
+        if merge.is_some() {
+            for (face, values) in normals::corners(&self.mesh) {
+                for (corner, normal) in values.iter().enumerate() {
+                    normal_indices.insert((face, corner), normal_indices.len() + 1);
+                    output.push_str(&format!("vn {} {} {}\n", normal[0], normal[1], normal[2]));
+                }
+            }
+        }
+        let mut previous_material = None;
+        for group in groups {
+            let vertices = group.vertices();
             output.push_str(&format!(
                 "o {}\n",
-                object.name.replace(char::is_whitespace, "_")
+                group.name.replace(char::is_whitespace, "_")
             ));
+            if group.grouped {
+                output.push_str(&format!("# sourcePivots {}\n", group.pivots()));
+            }
             for face in self
                 .mesh
                 .faces
                 .iter()
-                .filter(|(_, face)| object.vertices.contains(&face[0]))
+                .filter(|(_, face)| vertices.contains(&face[0]))
             {
                 let (face_id, face) = face;
+                let material = self.mesh.face_textures.get(face_id);
+                if merge.is_some() && material != previous_material {
+                    let name = export_groups::obj_material_name(material.map(String::as_str));
+                    output.push_str(&format!("usemtl {name}\n"));
+                    previous_material = material;
+                }
                 output.push('f');
-                for id in face {
+                for (corner, id) in face.iter().enumerate() {
                     output.push_str(&format!(" {}", indices[id]));
                     if let Some(uv) = uv_indices.get(&(*face_id, *id)) {
                         output.push_str(&format!("/{uv}"));
+                    } else if merge.is_some() {
+                        output.push('/');
+                    }
+                    if let Some(normal) = normal_indices.get(&(*face_id, corner)) {
+                        output.push_str(&format!("/{normal}"));
                     }
                 }
                 output.push('\n');
             }
         }
-        output
+        Ok(output)
     }
+
 }
 
 fn vector(value: &Value) -> Result<[f64; 3], String> {
@@ -941,6 +989,7 @@ fn cube() -> Mesh {
         vec![2, 3, 7, 6],
     ];
     let mut mesh = Mesh {
+        modern_material_defaults: true,
         rig: None,
         constructions: BTreeMap::new(),
         intersection_allowances: vec![],
@@ -949,6 +998,7 @@ fn cube() -> Mesh {
         component_id_high_watermark: 0,
         vertex_colors: BTreeMap::new(),
         uvs: BTreeMap::new(),
+        projection_regions: BTreeMap::new(),
         textures: BTreeMap::new(),
         face_textures: BTreeMap::new(),
         vertices: points

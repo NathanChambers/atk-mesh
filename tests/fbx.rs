@@ -324,6 +324,124 @@ fn export_writes_smooth_corner_normals_as_unit_vectors() {
 }
 
 #[test]
+fn consolidated_fbx_and_obj_preserve_appearance_and_source_instances() {
+    let mut document = Document::default();
+    document
+        .execute(json!({"command":"uv_project","mode":"box","object":1}))
+        .unwrap();
+    for (name, face) in [("Blue", 1), ("Red", 2)] {
+        document.execute(json!({"command":"texture_create","texture":name,"width":1,"height":1,"color":[1,0,0,1]})).unwrap();
+        document
+            .execute(json!({"command":"texture_assign","texture":name,"faces":[face]}))
+            .unwrap();
+    }
+    document
+        .execute(json!({"command":"object_instance","object":1,"name":"Other","value":[5,0,0]}))
+        .unwrap();
+    document
+        .execute(json!({"command":"object_set_origin","object":1,"origin":[1,1,0]}))
+        .unwrap();
+    document
+        .execute(
+            json!({"command":"collection_create","name":"Pair","objects":[1,2],"primary":true}),
+        )
+        .unwrap();
+    let before = document.execute(json!({"command":"save"})).unwrap();
+    let baseline = document
+        .execute(json!({"command":"export","format":"fbx"}))
+        .unwrap();
+    let baseline_bytes = base64::decode(baseline["fbx_base64"].as_str().unwrap()).unwrap();
+    let baseline_scene = ufbx::load_memory(&baseline_bytes, ufbx::LoadOpts::default()).unwrap();
+    let reference_normals: Vec<_> = baseline_scene
+        .meshes
+        .iter()
+        .flat_map(|mesh| {
+            mesh.vertex_normal
+                .indices
+                .iter()
+                .map(|index| mesh.vertex_normal.values[*index as usize])
+        })
+        .collect();
+    for mode in ["all", "collection"] {
+        let response = document
+            .execute(json!({"command":"export","format":"fbx","merge":mode}))
+            .unwrap();
+        let bytes = base64::decode(response["fbx_base64"].as_str().unwrap()).unwrap();
+        let scene = ufbx::load_memory(&bytes, ufbx::LoadOpts::default()).unwrap();
+        assert_eq!(scene.meshes.len(), 1);
+        let merged = &scene.meshes[0];
+        assert_eq!(merged.num_vertices, 16);
+        assert_eq!(merged.num_faces, 12);
+        assert!(merged.vertex_normal.exists && merged.vertex_uv.exists);
+        let node = scene.nodes.iter().find(|node| node.mesh.is_some()).unwrap();
+        for (index, point) in merged.vertices.iter().enumerate() {
+            let world = ufbx::transform_position(&node.geometry_to_world, *point);
+            let expected: &serde_json::Value = &before["mesh"]["vertices"][(index + 1).to_string()];
+            for (axis, value) in [world.x, world.y, world.z].iter().enumerate() {
+                assert!((value - expected[axis].as_f64().unwrap()).abs() < 1e-10);
+            }
+        }
+        for (index, expected) in merged.vertex_normal.indices.iter().zip(&reference_normals) {
+            let normal = merged.vertex_normal.values[*index as usize];
+            assert!(
+                (normal.x - expected.x).abs()
+                    + (normal.y - expected.y).abs()
+                    + (normal.z - expected.z).abs()
+                    < 1e-10
+            );
+        }
+        assert_eq!(merged.materials.len(), 3);
+        assert_eq!(merged.face_material.len(), 12);
+        assert_eq!(merged.face_material[0], merged.face_material[6]);
+        assert_ne!(merged.face_material[0], merged.face_material[1]);
+        let mut cursor = 27;
+        let mut nodes = Vec::new();
+        while unsigned(&bytes, cursor) != 0 {
+            nodes.push(read(&bytes, &mut cursor));
+        }
+        let model = nodes
+            .iter()
+            .find(|n| n.name == "Objects")
+            .unwrap()
+            .children
+            .iter()
+            .find(|n| n.name == "Model")
+            .unwrap();
+        let property = model
+            .children
+            .iter()
+            .find(|n| n.name == "Properties70")
+            .unwrap()
+            .children
+            .iter()
+            .find(|n| matches!(&n.properties[0],Property::Text(name) if name=="sourcePivots"))
+            .unwrap();
+        let Property::Text(json) = &property.properties[4] else {
+            panic!("missing source pivot metadata")
+        };
+        let pivots: serde_json::Value = serde_json::from_str(json).unwrap();
+        for (index, id) in ["1", "2"].into_iter().enumerate() {
+            assert_eq!(
+                pivots[index]["origin"],
+                before["mesh"]["objects"][id]["origin"]
+            );
+        }
+        let response = document
+            .execute(json!({"command":"export","format":"obj","merge":mode}))
+            .unwrap();
+        let obj = response["obj"].as_str().unwrap();
+        assert_eq!(obj.lines().filter(|l| l.starts_with("o ")).count(), 1);
+        assert_eq!(obj.lines().filter(|l| l.starts_with("vn ")).count(), 48);
+        assert!(obj.contains("usemtl Red\n") && obj.contains("usemtl Blue\n"));
+        assert!(obj.contains(&format!("# sourcePivots {pivots}")));
+        if mode == "collection" {
+            assert!(obj.contains("o Pair\n"));
+        }
+    }
+    assert_eq!(document.execute(json!({"command":"save"})).unwrap(), before);
+}
+
+#[test]
 fn instances_export_resolved_geometry_with_independent_pivots() {
     let mut document = Document::default();
     document

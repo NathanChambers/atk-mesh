@@ -26,6 +26,73 @@ fn assert_close(actual: [f64; 3], expected: [f64; 3]) {
     }
 }
 
+#[test]
+fn scaled_placement_propagates_master_edits_and_round_trips() {
+    let mut document = Document::default();
+    document.execute(json!({"command":"object_instance","object":1,"name":"Scaled","value":[4,0,0],"scale":[2,3,4]})).unwrap();
+    document
+        .execute(json!({"command":"object_scale","object":2,"value":0.5}))
+        .unwrap();
+    document
+        .execute(json!({"command":"select","object":1,"vertices":[1]}))
+        .unwrap();
+    document
+        .execute(json!({"command":"move","object":1,"value":[0,0.25,0]}))
+        .unwrap();
+    let saved = state(&mut document);
+    let mesh = &saved["mesh"];
+    let link = &mesh["objects"]["2"]["instance"];
+    let anchor: [f64; 3] = serde_json::from_value(link["anchor"].clone()).unwrap();
+    let origin: [f64; 3] = serde_json::from_value(mesh["objects"]["1"]["origin"].clone()).unwrap();
+    let source = point(mesh, 1);
+    let target = point(mesh, link["vertices"]["1"].as_u64().unwrap());
+    assert_eq!(link["scale"], json!([1.0, 1.5, 2.0]));
+    assert_close(
+        target,
+        std::array::from_fn(|i| anchor[i] + (source[i] - origin[i]) * [1., 1.5, 2.][i]),
+    );
+    let mut restored = Document::default();
+    restored
+        .execute(json!({"command":"load","project":saved}))
+        .unwrap();
+    assert_eq!(state(&mut restored)["mesh"], *mesh);
+}
+
+#[test]
+fn exporting_a_group_keeps_instance_links_and_world_pivots() {
+    let mut document = Document::default();
+    instance(&mut document);
+    document
+        .execute(json!({"command":"collection_create","name":"Pair","objects":[1,2]}))
+        .unwrap();
+    let source = state(&mut document);
+    for merge in ["all", "collection"] {
+        let result = document
+            .execute(json!({"command":"export","format":"glb","merge":merge}))
+            .unwrap();
+        let bytes = gpt_mesh::base64::decode(result["glb_base64"].as_str().unwrap()).unwrap();
+        let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let file: Value = serde_json::from_slice(&bytes[20..20 + length]).unwrap();
+        assert_eq!(file["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(file["meshes"].as_array().unwrap().len(), 1);
+        let pivots = &file["nodes"][0]["extras"]["sourcePivots"];
+        assert_eq!(
+            pivots[0]["origin"],
+            source["mesh"]["objects"]["1"]["origin"]
+        );
+        assert_eq!(
+            pivots[1]["origin"],
+            source["mesh"]["objects"]["2"]["origin"]
+        );
+        let pos = file["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+            .as_u64()
+            .unwrap() as usize;
+        assert_eq!(file["accessors"][pos]["min"][0], -1.0);
+        assert_eq!(file["accessors"][pos]["max"][0], 5.0);
+        assert_eq!(state(&mut document), source);
+    }
+}
+
 fn assert_link(mesh: &Value) {
     let link = &mesh["objects"]["2"]["instance"];
     let master = link["master"].as_u64().unwrap().to_string();
@@ -138,7 +205,11 @@ fn independent_placement_and_pivots_survive_master_transforms() {
     let moved_instance = document
         .execute(json!({"command":"object_move","object":2,"value":[0,2,3]}))
         .unwrap();
-    assert!(moved_instance["operation"].get("shared_shape_edit").is_none());
+    assert!(
+        moved_instance["operation"]
+            .get("shared_shape_edit")
+            .is_none()
+    );
     let before = state(&mut document);
     let ids = before["mesh"]["objects"]["2"]["vertices"]
         .as_array()
@@ -154,8 +225,14 @@ fn independent_placement_and_pivots_survive_master_transforms() {
         if moved_master {
             assert_eq!(operation["object"], 1);
             assert_eq!(operation["linked_instances_unchanged"], 1);
-            assert_eq!(operation["shared_shape_edit"]["select"], json!({"command":"select_object","object":1}));
-            assert_eq!(operation["shared_shape_edit"]["move"], json!({"command":"move","object":1,"value":[3,4,5]}));
+            assert_eq!(
+                operation["shared_shape_edit"]["select"],
+                json!({"command":"select_object","object":1})
+            );
+            assert_eq!(
+                operation["shared_shape_edit"]["move"],
+                json!({"command":"move","object":1,"value":[3,4,5]})
+            );
         } else {
             assert!(operation.get("shared_shape_edit").is_none());
         }
@@ -185,8 +262,14 @@ fn independent_placement_and_pivots_survive_master_transforms() {
     document.execute(recipe["select"].clone()).unwrap();
     let shared_edit = document.execute(recipe["move"].clone()).unwrap();
     assert_link(&shared_edit["mesh"]);
-    assert_eq!(shared_edit["mesh"]["objects"]["1"]["origin"], changed["mesh"]["objects"]["1"]["origin"]);
-    assert_eq!(shared_edit["mesh"]["objects"]["2"]["origin"], changed["mesh"]["objects"]["2"]["origin"]);
+    assert_eq!(
+        shared_edit["mesh"]["objects"]["1"]["origin"],
+        changed["mesh"]["objects"]["1"]["origin"]
+    );
+    assert_eq!(
+        shared_edit["mesh"]["objects"]["2"]["origin"],
+        changed["mesh"]["objects"]["2"]["origin"]
+    );
     for id in ids {
         let id = id.as_u64().unwrap();
         assert_ne!(point(&shared_edit["mesh"], id), point(&changed["mesh"], id));
@@ -337,7 +420,10 @@ fn history_persistence_queries_capture_and_exports_resolve_instances() {
         .execute(json!({"command":"query_mesh","kind":"objects"}))
         .unwrap();
     assert_eq!(objects["items"][0]["instance_count"], 1);
-    assert_eq!(objects["items"][0]["instances"], json!([{"id":2,"name":"Linked"}]));
+    assert_eq!(
+        objects["items"][0]["instances"],
+        json!([{"id":2,"name":"Linked"}])
+    );
     assert_eq!(objects["items"][1]["master_object"], 1);
     let mapping = restored
         .execute(json!({"command":"query_instance","object":2,"limit":2}))
@@ -516,4 +602,38 @@ fn coincident_vertices_require_an_explicit_topology_checked_mapping() {
         .unwrap();
     assert_link(&linked["mesh"]);
     assert_eq!(linked["mesh"]["faces"], before["mesh"]["faces"]);
+}
+
+#[test]
+fn rotated_nonuniform_instance_writes_inverse_transpose_normals_to_glb_and_capture() {
+    let mut document = Document::default();
+    document.execute(json!({"command":"shade_smooth","object":1,"angle":120})).unwrap();
+    document.execute(json!({"command":"object_instance","object":1,"name":"Scaled","scale":[2,3,4],"value":[10,0,0]})).unwrap();
+    document.execute(json!({"command":"object_rotate","object":2,"value":[0,0,90]})).unwrap();
+    let export = document.execute(json!({"command":"export","format":"glb","solo_objects":[2]})).unwrap();
+    let bytes = gpt_mesh::base64::decode(export["glb_base64"].as_str().unwrap()).unwrap();
+    let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let glb: Value = serde_json::from_slice(&bytes[20..20+length]).unwrap();
+    let index = glb["meshes"][0]["primitives"][0]["attributes"]["NORMAL"].as_u64().unwrap() as usize;
+    let view = glb["accessors"][index]["bufferView"].as_u64().unwrap() as usize;
+    let offset = 28 + length + glb["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+    let normal = [1.0_f64/3.0, -1.0/2.0, -1.0/4.0];
+    let length = normal[0].hypot(normal[1]).hypot(normal[2]);
+    let expected = normal.map(|n| n/length);
+    for axis in 0..3 {
+        let start = offset + axis*4;
+        let actual = f32::from_le_bytes(bytes[start..start+4].try_into().unwrap()) as f64;
+        assert!((actual-expected[axis]).abs()<1e-6, "{actual} != {}", expected[axis]);
+    }
+
+    let capture = document.execute(json!({"command":"capture","mode":"normals","solo_objects":[2],"yaw":180,"pitch":0,"center":[12.99,-1.99,-4],"zoom":2000,"width":100,"height":100})).unwrap();
+    let png = gpt_mesh::base64::decode(capture["png_base64"].as_str().unwrap()).unwrap();
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png)).read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    reader.next_frame(&mut pixels).unwrap();
+    let offset = (50*100+50)*3;
+    for axis in 0..3 {
+        let actual = f64::from(pixels[offset+axis])/127.5-1.0;
+        assert!((actual-expected[axis]).abs()<0.04, "capture {actual} != {}",expected[axis]);
+    }
 }

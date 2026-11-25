@@ -26,6 +26,7 @@ pub(super) struct Options {
     mode: Mode,
     pub clean: bool,
     depth_range: Option<[f64; 2]>,
+    thin_feature_pixels: f64,
 }
 
 impl Options {
@@ -85,7 +86,11 @@ impl Options {
             }
             None => None,
         };
+        let thin_feature_pixels = request.get("thin_feature_pixels").map(|value| {
+            value.as_f64().filter(|v| v.is_finite() && *v > 0.0).ok_or("thin_feature_pixels must be finite and positive")
+        }).transpose()?.unwrap_or(2.0);
         Ok(Self {
+            thin_feature_pixels,
             width,
             height,
             mode,
@@ -369,6 +374,11 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                     }
                 }
             }
+            let triangle_normal = if matches!(options.mode, Mode::Material | Mode::Orientation) {
+                crate::normals::face(mesh, &[face[i0], face[i1], face[i2]])
+            } else { normal };
+            let back_facing = dot(triangle_normal, view.camera.toward(mesh.vertices[&face[i0]])) < 0.0;
+            if options.mode == Mode::Material && back_facing && material.is_some_and(|m| !m.double_sided) { continue; }
             let tangent_frame = if options.mode == Mode::Material && complete_uv {
                 crate::material::frame(
                     [
@@ -401,6 +411,11 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                     view.camera.raster_point(triangle[1].position)?,
                     view.camera.raster_point(triangle[2].position)?,
                 ];
+                let gradients = if material.is_some() && complete_uv {
+                    let corners = [face[i0], face[i1], face[i2]];
+                    let uv = triangle.map(|corner| std::array::from_fn(|axis| (0..3).map(|i| mesh.uvs[id][&corners[i]][axis] * corner.weights[i]).sum()));
+                    Some(crate::material::Gradients::new(points, uv, view.camera.perspective()))
+                } else { None };
                 canvas.triangle(points, *id, |depth, mut weights| {
                     if view.camera.perspective() {
                         weights =
@@ -441,7 +456,9 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                                 .sum()
                         });
                         if options.mode == Mode::Material {
-                            if material.is_some_and(|material| material.masked(uv)) {
+                            let q = if view.camera.perspective() { depth } else { 1.0 };
+                            let lod = gradients.as_ref().zip(material).map_or(0.0, |(g,m)| g.lod(uv,q,m.dimensions));
+                            if material.is_some_and(|material| material.masked(uv,lod)) {
                                 return None;
                             }
                             let smooth = crate::normals::unit(std::array::from_fn(|axis| {
@@ -461,10 +478,12 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                             return Some(crate::material::shade(
                                 material,
                                 uv,
+                                lod,
                                 paint,
                                 smooth,
                                 tangent_frame,
                                 toward,
+                                back_facing,
                             ));
                         }
                         return Some(if options.mode == Mode::UvChecker {
@@ -488,14 +507,14 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                         (0..3).map(|i| normals[i][axis] * original_weights[i]).sum()
                     }));
                     let normal = if options.mode == Mode::Orientation {
-                        normal
+                        triangle_normal
                     } else {
                         smooth
                     };
                     Some(shade(
                         normal,
                         view.camera.linear_depth(depth),
-                        toward_camera,
+                        if options.mode == Mode::Orientation { view.camera.toward(mesh.vertices[&face[i0]]) } else { toward_camera },
                         options.mode,
                         range,
                         face_color,
@@ -585,10 +604,123 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><image width=\"{width}\" height=\"{height}\" href=\"data:image/png;base64,{encoded}\"/></svg>"
     );
     let mut result = json!({"svg":svg, "png_base64":encoded, "mode":options.name(), "clean":options.clean, "background_rgb":background, "depth_range":range, "depth_encoding":"linear camera-space z: far=32, near=255; background=0; larger z is nearer", "normal_space":"world", "normal_encoding":"RGB = round(255 * (normal + 1) / 2); no lighting or gamma", "face_id_colors":palette, "object_id_colors":object_palette, "collection_id_colors":if options.mode == Mode::CollectionIds {json!(collection_palette.as_ref().unwrap().legend)} else {json!({})}, "unassigned_collection_rgb":[128,128,128], "projection":if view.camera.perspective() {"perspective"} else {"orthographic"}});
+    result["thin_features"] = thin_features(mesh, view, options);
+    if options.mode == Mode::Orientation {
+        let visible = canvas.occupied.iter().filter(|occupied| **occupied).count();
+        let back = canvas.pixels.chunks_exact(3).filter(|rgb| *rgb == [220, 55, 40]).count();
+        let ratio = (visible > 0).then(|| back as f64 / visible as f64);
+        result["orientation"] = json!({"visible_pixels":visible,"back_facing_pixels":back,"back_facing_ratio":ratio});
+    }
     if options.mode == Mode::Tessellation {
         result["tessellation"] = json!({"triangle_count":triangle_count,"nonplanar_face_count":nonplanar_count,"nonplanar_face_sample":nonplanar_sample});
     }
     Ok(result)
+}
+
+impl View {
+    pub(crate) fn project(mesh: &Mesh, request: &Value, revision: u64) -> Result<Self, String> {
+        let camera = crate::projection::Camera::parse(request)?;
+        let visibility = CaptureVisibility::parse(request, mesh)?;
+        let mut points = BTreeMap::new();
+        for (id,position) in &mesh.vertices {
+            if visibility.includes_vertex(id) && camera.contains(*position) {
+                points.insert(*id, camera.raster_point(*position)?);
+            }
+        }
+        Ok(Self { revision, points, camera, visibility })
+    }
+}
+
+pub(crate) fn thin_feature_constraint(mesh: &Mesh, object: Option<u64>, limit: &Value) -> Result<Value, String> {
+    let mut request = limit.get("camera").filter(|value| value.is_object()).ok_or("thin feature constraint requires a camera")?.clone();
+    if request.get("width").is_none() || request.get("height").is_none() {
+        return Err("thin feature camera must declare width and height".into());
+    }
+    if let Some(object) = object { request["solo_objects"] = json!([object]); }
+    request["thin_feature_pixels"] = limit.get("threshold_pixels").ok_or("thin feature constraint requires threshold_pixels")?.clone();
+    let maximum = |name: &str| {
+        limit.get(name).map(|value| value.as_u64().ok_or_else(|| format!("{name} must be a nonnegative integer"))).unwrap_or(Ok(0))
+    };
+    let max_faces = maximum("max_faces")?;
+    let max_edges = maximum("max_edges")?;
+    let options = Options::parse(&request)?;
+    let view = View::project(mesh, &request, 0)?;
+    let measured = thin_features(mesh, &view, &options);
+    let has_geometry = measured["measured_faces"].as_u64().unwrap_or(0) > 0;
+    let passed = has_geometry && measured["face_count"].as_u64().unwrap() <= max_faces && measured["edge_count"].as_u64().unwrap() <= max_edges;
+    Ok(json!({"passed":passed,"measured":measured,"max_faces":max_faces,"max_edges":max_edges,
+        "scope_in_frame":has_geometry,"camera":view.camera.metadata()}))
+}
+
+fn thin_features(mesh: &Mesh, view: &View, options: &Options) -> Value {
+    let threshold = options.thin_feature_pixels;
+    let inside = |point: &[f64; 3]| {
+        (0.0..options.width as f64).contains(&point[0]) && (0.0..options.height as f64).contains(&point[1])
+    };
+    let mut edge_ids = BTreeSet::new();
+    let mut thin_edges = 0;
+    let mut edge_sample = Vec::new();
+    let mut thin_faces = 0;
+    let mut face_sample = Vec::new();
+    let mut measured_faces = 0;
+    let mut measured_edges = 0;
+    for (id, face) in &mesh.faces {
+        if !view.visibility.includes_vertex(&face[0]) {
+            continue;
+        }
+        let mut longest = [0.0; 2];
+        let mut longest_length = 0.0;
+        let mut complete = true;
+        for i in 0..face.len() {
+            let a = face[i];
+            let b = face[(i + 1) % face.len()];
+            let Some((p,q)) = view.points.get(&a).zip(view.points.get(&b)) else {
+                complete = false;
+                continue;
+            };
+            if !inside(p) || !inside(q) {
+                complete = false;
+                continue;
+            }
+            let dx = q[0] - p[0];
+            let dy = q[1] - p[1];
+            let length = dx.hypot(dy);
+            if length > longest_length {
+                longest_length = length;
+                longest = [dx/length, dy/length];
+            }
+            let edge = (a.min(b), a.max(b));
+            if edge_ids.insert(edge) {
+                measured_edges += 1;
+                if length < threshold {
+                    thin_edges += 1;
+                    if edge_sample.len() < 16 {
+                        edge_sample.push(json!({"vertices":edge,"length_pixels":length}));
+                    }
+                }
+            }
+        }
+        if !complete { continue; }
+        measured_faces += 1;
+        let mut minimum = f64::INFINITY;
+        let mut maximum = f64::NEG_INFINITY;
+        for vertex in face {
+            let p = view.points[vertex];
+            let across = longest[0]*p[1] - longest[1]*p[0];
+            minimum = minimum.min(across);
+            maximum = maximum.max(across);
+        }
+        let width = maximum - minimum;
+        if width < threshold {
+            thin_faces += 1;
+            if face_sample.len() < 16 {
+                face_sample.push(json!({"face":id,"width_pixels":width}));
+            }
+        }
+    }
+    json!({"threshold_pixels":threshold,"face_count":thin_faces,"edge_count":thin_edges,
+        "face_sample":face_sample,"edge_sample":edge_sample,"measured_faces":measured_faces,"measured_edges":measured_edges,
+        "scope":"Fully in-frame authored faces and edges of included objects, including occluded geometry. Width is the projected span perpendicular to the longest authored perimeter edge."})
 }
 
 pub(super) fn categorical_color(index: usize, used: &mut BTreeSet<u32>) -> Result<[u8; 3], String> {

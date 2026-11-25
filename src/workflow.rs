@@ -59,10 +59,14 @@ pub(crate) fn review_rig_fingerprint(mesh: &Value, object: Option<u64>) -> Strin
     fingerprint(&json!({"bones":rig["bones"],"clips":rig["clips"],"weights":weights}))
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
+    hash_byte_sequence(bytes.iter().copied())
+}
+
+pub(crate) fn hash_byte_sequence(bytes: impl IntoIterator<Item=u8>) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in bytes {
-        hash ^= u64::from(*byte);
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
@@ -725,7 +729,43 @@ impl Workflow {
         json!({"decision":decision,"prompt":prompt,"help":{"command":"help","topic":topic},"command":command})
     }
 
+    pub(crate) fn constraint_results(&self, mesh: &crate::Mesh, metrics: &Value) -> Result<Vec<Value>, String> {
+        let mut checks = Vec::new();
+        for brief in self.records.values().filter(|record| record["requirement"] == "intent") {
+            let Some(limits) = brief.get("constraints") else { continue };
+            let object = brief["object"].as_u64();
+            if object.is_some_and(|id| !mesh.objects.contains_key(&id)) { continue }
+            checks.extend(crate::source_metrics::constraints(mesh, object, limits, metrics)?);
+        }
+        Ok(checks)
+    }
+
+    fn measured_requirements(&self, state: &Value) -> Result<Vec<Value>, String> {
+        let has_constraints = self.records.values().any(|record| record.get("constraints").is_some());
+        if !has_constraints && state["modern_material_defaults"] != true { return Ok(vec![]) }
+        let mesh: crate::Mesh = serde_json::from_value(state.clone()).map_err(|error| error.to_string())?;
+        let metrics = crate::source_metrics::inspect(&mesh, &json!({}))?;
+        let mut issues: Vec<_> = metrics["confirmed_defects"].as_array().into_iter().flatten()
+            .map(|finding| json!({"requirement":"closed_shell_integrity","finding":finding})).collect();
+        for check in self.constraint_results(&mesh, &metrics)? {
+            if check["passed"] == false {
+                issues.push(json!({"requirement":check["metric"],"check":check}));
+            }
+        }
+        Ok(issues)
+    }
+
     pub fn gate(&self, stage: &str, mesh: &Value, directory: &Path) -> Option<Value> {
+        if matches!(stage, "export" | "complete") {
+            let result = self.measured_requirements(mesh);
+            let issues = match result {
+                Ok(issues) => issues,
+                Err(error) => vec![json!({"requirement":"source_metrics","error":error})],
+            };
+            if !issues.is_empty() {
+                return Some(json!({"status":"requirements_missing","stage":stage,"requirements":issues}));
+            }
+        }
         let needed: &[&str] = match stage {
             "blockout" => &[],
             "primary" => &REQUIREMENTS[..2],
@@ -875,11 +915,20 @@ impl Workflow {
             if !matches!(stage, "blockout" | "primary" | "detail" | "complete") {
                 return Err("stage must be blockout, primary, detail or complete".into());
             }
-            if let Some(blocked) = self.gate(stage, mesh, directory) {
+            let objects: Vec<_> = mesh["objects"].as_object().into_iter().flatten().map(|(id,object)| {
+                json!({"id":id,"name":object["name"],"stage":object["stage"].as_str().unwrap_or("blockout")})
+            }).collect();
+            if let Some(mut blocked) = self.gate(stage, mesh, directory) {
+                if stage == "complete" { blocked["object_stages"]=json!(objects); }
                 return Ok(blocked);
+            }
+            if stage=="complete" && self.records.get("intent").is_some_and(|intent|intent["require_production_ready"]==true)
+                && objects.iter().any(|object|object["stage"]!="production_ready") {
+                return Ok(json!({"status":"requirements_missing","stage":stage,"requirement":"production_ready","object_stages":objects}));
             }
             self.stage = stage.into();
             let mut result = json!({"stage":stage,"follow_ups":self.follow_ups()});
+            if stage=="complete" { result["object_stages"]=json!(objects); }
             if matches!(stage, "primary" | "detail") {
                 result["part_review"] = self.part_review();
             }
@@ -1035,6 +1084,17 @@ impl Workflow {
                 }
                 let status = if outcome == Some("needs_revision") { "needs_revision" } else { "satisfied" };
                 let mut record = json!({"requirement":requirement,"object":object,"status":status,"assessment":assessment,"evidence":evidence,"geometry":fingerprint(&geometry(mesh,object)),"design":self.design_fingerprint()});
+                if let Some(option)=request.get("require_production_ready") {
+                    if requirement!="intent" || object.is_some() || !option.is_boolean() { return Err("require_production_ready must be a boolean on project intent".into()); }
+                    record["require_production_ready"]=option.clone();
+                }
+                if let Some(limits)=request.get("constraints") {
+                    if requirement != "intent" { return Err("constraints belong to an intent assessment".into()); }
+                    let source:crate::Mesh=serde_json::from_value(mesh.clone()).map_err(|error|error.to_string())?;
+                    let metrics=crate::source_metrics::inspect(&source,&json!({}))?;
+                    crate::source_metrics::constraints(&source,object,limits,&metrics)?;
+                    record["constraints"]=limits.clone();
+                }
                 if shape_brief {
                     record["basis"] = json!("shape_brief");
                     record["brief"] = json!(fingerprint(&brief));

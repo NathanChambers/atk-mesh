@@ -3,12 +3,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+pub(crate) mod generator_uv;
+mod triangle_report;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Component {
     pub name: String,
     pub faces: BTreeSet<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub uv_cap_faces: BTreeSet<u64>,
 }
 
 pub(super) fn is_zero(value: &u64) -> bool {
@@ -70,6 +75,7 @@ pub(super) fn named(mesh: &Mesh, name: &str) -> Result<u64, String> {
 pub(super) fn reconcile(mesh: &mut Mesh) {
     for component in mesh.components.values_mut() {
         component.faces.retain(|id| mesh.faces.contains_key(id));
+        component.uv_cap_faces.retain(|id| component.faces.contains(id));
     }
     mesh.components
         .retain(|_, component| !component.faces.is_empty());
@@ -141,11 +147,17 @@ pub(super) fn validate(mesh: &Mesh) -> Result<(), String> {
         {
             return Err("component references missing faces".into());
         }
+        if !component.uv_cap_faces.is_subset(&component.faces) {
+            return Err("generator UV caps must belong to the component".into());
+        }
     }
     Ok(())
 }
 
 pub(super) fn query(mesh: &Mesh, request: &Value, revision: u64) -> Result<Value, String> {
+    if request["report"] == "triangles" {
+        return triangle_report::query(mesh, request, revision);
+    }
     let region = request
         .get("region")
         .map(|v| {
@@ -289,12 +301,18 @@ pub(super) fn generate(mesh: &mut Mesh, command: &str, request: &Value) -> Resul
     if let Some(finish) = finish {
         operation["finish_transferred"] = json!(finish.apply(mesh, &created_faces));
     }
+    let uv_cap_faces = if let Some(uv) = request.get("uv") {
+        generator_uv::assign(mesh, command, request, uv, &mut operation, &created_faces)?
+    } else {
+        BTreeSet::new()
+    };
     mesh.components.insert(
         component_id,
         Component {
             name: name.clone(),
             faces: created_faces.clone(),
             recipe: Some(request.clone()),
+            uv_cap_faces,
         },
     );
     let region_vertices = vertices(mesh, &created_faces);

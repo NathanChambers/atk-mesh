@@ -29,7 +29,7 @@ fn word(bytes: &[u8], start: usize) -> Result<u32, String> {
     Ok(u32::from_le_bytes(source.try_into().unwrap()))
 }
 
-fn decode(bytes: &[u8]) -> Result<(Value, &[u8]), String> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<(Value, &[u8]), String> {
     if bytes.get(..4) != Some(b"glTF") || word(bytes, 4)? != 2 {
         return Err("expected a GLB version 2 file".into());
     }
@@ -64,12 +64,6 @@ fn decode(bytes: &[u8]) -> Result<(Value, &[u8]), String> {
     if document["asset"]["version"] != "2.0" {
         return Err("unsupported glTF asset version".into());
     }
-    if document["extensionsRequired"]
-        .as_array()
-        .is_some_and(|items| !items.is_empty())
-    {
-        return Err("required glTF extensions are not supported".into());
-    }
     let buffers = document["buffers"]
         .as_array()
         .ok_or("missing GLB buffers")?;
@@ -81,11 +75,11 @@ fn decode(bytes: &[u8]) -> Result<(Value, &[u8]), String> {
     Ok((document, binary))
 }
 
-fn accessor(
+pub(crate) fn accessor(
     document: &Value,
     binary: &[u8],
     index: &Value,
-    positions: bool,
+    shape: &str,
 ) -> Result<Vec<Vec<f64>>, String> {
     let index = integer(index)?;
     let source = document["accessors"].get(index).ok_or("unknown accessor")?;
@@ -93,11 +87,11 @@ fn accessor(
         return Err("sparse and normalized GLB accessors are not supported".into());
     }
     let component = integer(&source["componentType"])?;
-    let (width, components) = if positions {
-        if component != 5126 || source["type"] != "VEC3" {
-            return Err("GLB positions must be float VEC3".into());
+    let (width, components) = if shape != "SCALAR" {
+        if component != 5126 || source["type"] != shape {
+            return Err(format!("GLB attribute must be float {shape}"));
         }
-        (4, 3)
+        (4, if shape == "VEC2" { 2 } else { 3 })
     } else {
         if source["type"] != "SCALAR" || !matches!(component, 5121 | 5123 | 5125) {
             return Err("GLB indices must be unsigned SCALAR".into());
@@ -311,10 +305,10 @@ impl Importer<'_> {
                     self.document,
                     self.binary,
                     &primitive["attributes"]["POSITION"],
-                    true,
+                    "VEC3",
                 )?;
                 let indices: Vec<usize> = match primitive.get("indices") {
-                    Some(index) => accessor(self.document, self.binary, index, false)?
+                    Some(index) => accessor(self.document, self.binary, index, "SCALAR")?
                         .iter()
                         .map(|value| value[0] as usize)
                         .collect(),
@@ -377,6 +371,13 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         return Err("GLB exceeds 64 MiB import limit".into());
     }
     let (document, binary) = decode(&bytes)?;
+    import_document(mesh, &document, binary)
+}
+
+pub(crate) fn import_document(mesh: &mut Mesh, document: &Value, binary: &[u8]) -> Result<Value, String> {
+    if document["extensionsRequired"].as_array().is_some_and(|items| !items.is_empty()) {
+        return Err("required glTF extensions are not supported".into());
+    }
     if document["animations"]
         .as_array()
         .is_some_and(|items| !items.is_empty())

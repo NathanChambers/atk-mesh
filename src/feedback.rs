@@ -11,14 +11,14 @@ const KINDS: [&str; 4] = [
     "workflow",
 ];
 
-pub(super) fn is_command(request: &Value) -> bool {
+pub fn is_command(request: &Value) -> bool {
     matches!(
         request["command"].as_str(),
         Some("feedback_submit" | "feedback_list")
     )
 }
 
-pub(super) fn run(request: &Value) -> Result<Value, String> {
+pub fn run(request: &Value) -> Result<Value, String> {
     let directory = feedback_directory()?;
     if request["command"] == "feedback_submit" {
         submit(&directory, request)
@@ -60,6 +60,11 @@ fn submit(directory: &Path, request: &Value) -> Result<Value, String> {
     let kind = read_kind(request)?.ok_or("kind is required")?;
     let mut report =
         json!({"schema_version":1,"kind":kind,"cli_version":env!("CARGO_PKG_VERSION")});
+    if let Some(value) = request.get("workspace") {
+        let path = fs::canonicalize(value.as_str().ok_or("workspace must be a directory path")?).map_err(|error|error.to_string())?;
+        if !path.is_dir() { return Err("workspace must be a directory".into()); }
+        report["workspace"] = json!(path);
+    }
     for (field, maximum, required) in [
         ("summary", 240, true),
         ("goal", 2_000, true),
@@ -155,6 +160,13 @@ fn list(directory: &Path, request: &Value) -> Result<Value, String> {
     Ok(
         json!({"directory":directory.display().to_string(),"reports":reports,"next_before":next_before}),
     )
+}
+
+pub(crate) fn for_workspace(workspace: &Path) -> Result<Vec<Value>,String> {
+    let directory = feedback_directory()?;
+    let (reports,_) = read_reports(&directory,None,usize::MAX,None).map_err(|e|e.to_string())?;
+    let workspace=json!(workspace);
+    Ok(reports.into_iter().filter(|report|report["workspace"]==workspace).map(|report|json!({"id":report["id"],"summary":report["summary"]})).collect())
 }
 
 fn read_reports(

@@ -152,5 +152,16 @@ pub(super) fn corners(mesh: &Mesh) -> BTreeMap<u64, Vec<[f64; 3]>> {
         }
         output.insert(*id, result);
     }
+    for link in mesh.objects.values().filter_map(|object| object.instance.as_ref()) {
+        if link.scale == [1.0; 3] {
+            continue;
+        }
+        for (master, instance) in &link.faces {
+            let transformed = output[master].iter()
+                .map(|normal| unit(link.transform_direction(*normal, true)))
+                .collect();
+            output.insert(*instance, transformed);
+        }
+    }
     output
 }

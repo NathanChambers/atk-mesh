@@ -16,7 +16,7 @@ fn help_exposes_embedded_guidance_with_exact_pages_and_no_model_changes() {
     assert_eq!(topics["command-api"], "Command API");
     assert_eq!(topics["reference-alignment"], "Reference alignment");
     let tasks = index["result"]["tasks"].as_object().unwrap();
-    assert_eq!(tasks["export_assets"], json!(["export"]));
+    assert_eq!(tasks["export_assets"], json!(["export","export-verification-and-workflow-reports"]));
     assert_eq!(tasks["sculpt_geometry"][0], "local-sculpting");
     let sculpt = session.execute(json!({"command":"help","topic":"local-sculpting"}));
     let sculpt_alias = session.execute(json!({"command":"help","topic":"sculpt"}));

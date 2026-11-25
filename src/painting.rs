@@ -209,11 +209,11 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             return Err("color must be normalized RGBA".into());
         }
         let pixel = color.map(|value| (value * 255.0).round() as u8);
-        return uv::edit(
-            mesh,
-            "texture_define",
-            &json!({"name":name,"width":width,"height":height,"rgba_base64":base64::encode(&pixel.repeat(width*height))}),
-        );
+        let mut definition = json!({"name":name,"width":width,"height":height,"rgba_base64":base64::encode(&pixel.repeat(width*height))});
+        for property in ["filter", "double_sided"] {
+            if let Some(value) = request.get(property) { definition[property] = value.clone(); }
+        }
+        return uv::edit(mesh, "texture_define", &definition);
     }
     let mut texture = mesh.textures.get(&name).ok_or("unknown texture")?.clone();
     let mut projection = None;
@@ -234,8 +234,9 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                 mask.surface = Some(surface);
             }
             "texture_mask_set" => {
-                let mask: Mask = serde_json::from_value(request["mask"].clone())
+                let mut mask: Mask = serde_json::from_value(request["mask"].clone())
                     .map_err(|error| format!("invalid mask: {error}"))?;
+                shape_mask_default(&mut mask, &request["mask"], mesh.modern_material_defaults);
                 paint.masks.insert(mask_name, mask);
             }
             "texture_mask_remove" => {
@@ -322,6 +323,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             }
             let mut layer: Layer = serde_json::from_value(request["layer"].clone())
                 .map_err(|error| format!("invalid layer: {error}"))?;
+            shape_mask_default(&mut layer.mask, &request["layer"]["mask"], mesh.modern_material_defaults);
             if let Some(source) = request.get("source_texture") {
                 let source = source
                     .as_str()
@@ -496,17 +498,34 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
         texture.paint = None;
     }
     let layers = texture.paint.as_ref().map_or(0, |paint| paint.layers.len());
+    let mut coverage = None;
+    if matches!(command, "texture_layer_add" | "texture_layer_set") {
+        let paint = texture.paint.as_ref().ok_or("missing paint stack")?;
+        let name = if command == "texture_layer_add" { &request["layer"]["name"] } else { &request["layer"] };
+        let layer = paint.layers.iter().find(|layer| Some(layer.name.as_str()) == name.as_str()).ok_or("unknown layer")?;
+        let mask = crate::paint_masks::resolve(&layer.mask, paint, texture.width, texture.height, &mut BTreeMap::new())?;
+        coverage = Some(mask.iter().sum::<f64>() / mask.len() as f64);
+    }
     mesh.textures.insert(name.clone(), texture);
     validate_budget(mesh)?;
     let mut result = json!({"texture":name,"layers":layers,"baked":true,"channels":mesh.textures[&name].maps.keys().collect::<Vec<_>>(),"shared_resource":true});
     if let Some(projection) = projection {
         result["projection"] = projection;
     }
+    if let Some(coverage) = coverage {
+        result["coverage"] = json!(coverage);
+    }
     Ok(result)
 }
 
 fn normalized(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+fn shape_mask_default(mask: &mut Mask, input: &Value, modern: bool) {
+    if modern && input.get("fill").is_none() && (!mask.polygons.is_empty() || !mask.strokes.is_empty()) {
+        mask.fill = 0.0;
+    }
 }
 
 fn validate_stack(texture: &Texture) -> Result<(), String> {
@@ -814,6 +833,8 @@ fn bake(texture: &mut Texture) -> Result<(), String> {
         return Ok(());
     };
     let neutral = Texture {
+        filter: texture.filter,
+        double_sided: texture.double_sided,
         width: texture.width,
         height: texture.height,
         rgba_base64: texture.rgba_base64.clone(),

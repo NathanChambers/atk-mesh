@@ -335,7 +335,8 @@ fn hull(request: &Value, obj_output: bool) -> Result<(String, Value), String> {
     objects::initialize(&mut document.mesh);
     let faces = document.mesh.faces.len();
     let artifact = if obj_output {
-        document.export_obj()
+        let visibility = crate::render::CaptureVisibility::parse(&json!({}), &document.mesh)?;
+        document.export_obj(&visibility, None)?
     } else {
         document.execute(json!({"command":"save"}))?.to_string()
     };

@@ -639,9 +639,11 @@ pub(super) fn extrude_polygon(mesh: &mut Mesh, request: &Value) -> Result<Value,
         .vertices
         .extend(rings.iter().flatten());
     mesh.selection = rings[last].iter().copied().collect();
-    Ok(
-        json!({"object":object,"front_vertices":rings[last],"back_vertices":rings[0],"bevel":bevel,"bevel_segments":segments}),
-    )
+    let mut operation = json!({"object":object,"front_vertices":rings[last],"back_vertices":rings[0],"bevel":bevel,"bevel_segments":segments});
+    if request.get("uv").is_some() {
+        operation["rings"] = json!(rings);
+    }
+    Ok(operation)
 }
 
 fn triangulate(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {

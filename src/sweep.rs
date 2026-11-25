@@ -157,7 +157,10 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         rings.push(ring);
     }
     let mut created_faces = 0;
-    for pair in rings.windows(2) {
+    for (section, pair) in rings.windows(2).enumerate() {
+        let left = scales[section];
+        let right = scales[section + 1];
+        let anisotropic_taper = left[0] * right[1] != left[1] * right[0];
         for i in 0..profile.len() {
             let j = (i + 1) % profile.len();
             if quads {
@@ -166,8 +169,24 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
                 mesh.add_face(face)?;
                 created_faces += 1;
             } else {
-                mesh.add_face(vec![pair[0][i], pair[0][j], pair[1][j]])?;
-                mesh.add_face(vec![pair[0][i], pair[1][j], pair[1][i]])?;
+                let [a, b, c, d] = [pair[0][i], pair[0][j], pair[1][j], pair[1][i]];
+                let distance = |first: u64, second: u64| {
+                    crate::geometry::length(crate::geometry::sub(
+                        mesh.vertices[&first],
+                        mesh.vertices[&second],
+                    ))
+                };
+                // On narrow concave sections the long diagonal can pass through the opposite wall.
+                if mesh.modern_material_defaults
+                    && anisotropic_taper
+                    && distance(b, d) < distance(a, c)
+                {
+                    mesh.add_face(vec![a, b, d])?;
+                    mesh.add_face(vec![b, c, d])?;
+                } else {
+                    mesh.add_face(vec![a, b, c])?;
+                    mesh.add_face(vec![a, c, d])?;
+                }
                 created_faces += 2;
             }
         }
@@ -193,7 +212,9 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         .iter()
         .map(|r| json!({"first_vertex":r[0],"count":r.len()}))
         .collect();
-    Ok(
-        json!({"object":object,"rings":rings,"created_faces":created_faces,"path_points":path.len(),"profile_points":profile.len(),"capped":cap_start && cap_end,"cap_start":cap_start,"cap_end":cap_end,"side_faces":if quads{"quads"}else{"triangles"},"self_intersections_checked":false}),
-    )
+    let mut operation = json!({"object":object,"rings":rings,"created_faces":created_faces,"path_points":path.len(),"profile_points":profile.len(),"capped":cap_start && cap_end,"cap_start":cap_start,"cap_end":cap_end,"side_faces":if quads{"quads"}else{"triangles"},"self_intersections_checked":false});
+    if request.get("uv").is_some() {
+        operation["uv_path"] = json!(path);
+    }
+    Ok(operation)
 }

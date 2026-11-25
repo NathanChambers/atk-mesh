@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+mod export_verify;
+mod review_report;
 
 pub struct Session {
     debug_session: bool,
@@ -172,9 +174,9 @@ impl Session {
             let valid_capture = record["output"]["ok"] == true
                 && matches!(
                     record["input"]["command"].as_str(),
-                    Some("capture" | "compare_reference" | "review_run")
+                    Some("capture" | "compare_reference" | "review_run" | "export_verify")
                 );
-            if !valid_capture {
+            if !valid_capture || (record["input"]["command"]=="export_verify" && !review_report) {
                 return Err("source event is not a successful capture or comparison".into());
             }
             let snapshot = record["summary"]["snapshot"]
@@ -192,14 +194,16 @@ impl Session {
                 return Err("capture geometry is stale; capture again".into());
             }
             if review_report {
-                if record["input"]["command"] != "review_run" {
-                    return Err("report evidence requires a successful review_run event".into());
+                let review = &record["full_output"]["result"];
+                let receipt = review.get("export_verification").unwrap_or(review);
+                if !matches!(record["input"]["command"].as_str(), Some("review_run" | "export_verify")) || receipt["status"] == "failed" {
+                    return Err("report evidence requires a successful review or verification".into());
                 }
                 request["path"] = record["output"]["result"]["artifacts"]["report"]["path"].clone();
             } else if record["input"]["command"] == "review_run" {
                 let part = request["capture"]
                     .as_str()
-                    .filter(|part| matches!(*part, "neutral" | "wireframe" | "silhouette_overlay" | "tessellation"))
+                    .filter(|part| matches!(*part, "neutral" | "wireframe" | "silhouette_overlay" | "tessellation" | "front" | "side" | "top" | "three_quarter" | "intended"))
                     .ok_or(
                         "review capture requires capture: neutral, wireframe, silhouette_overlay or tessellation",
                     )?;
@@ -426,15 +430,20 @@ impl Session {
                 "tessellation",
                 "wireframe",
                 "defects",
+                "standard_views",
+                "export",
             ] {
                 if let Some(value) = request.get(key) {
                     preset[key] = value.clone();
                 }
             }
-            for key in ["tessellation", "wireframe"] {
+            for key in ["tessellation", "wireframe", "standard_views"] {
                 if preset.get(key).is_some_and(|value| !value.is_boolean()) {
                     return Err(format!("{key} must be a boolean"));
                 }
+            }
+            if let Some(export) = preset.get("export") && !matches!(export["format"].as_str(), Some("glb" | "fbx" | "obj" | "stl")) {
+                return Err("export preset requires a supported format".into());
             }
             if preset.get("defects").is_some_and(|value| !value.is_boolean() && !value.is_object()) {
                 return Err("defects must be a boolean or an inspect_defects options object".into());
@@ -574,6 +583,19 @@ impl Session {
             comparison["layout"] = json!("overlay");
             views.insert("silhouette_overlay".into(), self.compare_reference(&comparison)?);
         }
+        if preset["standard_views"] == true {
+            for (label, angles) in [("front",Some((0.,0.))),("side",Some((90.,0.))),("top",Some((0.,90.))),("three_quarter",Some((45.,25.))),("intended",None)] {
+                let mut capture = base.clone();
+                capture["command"] = json!("capture");
+                capture["mode"] = json!("material");
+                capture["clean"] = json!(true);
+                if let Some((yaw,pitch)) = angles {
+                    capture["yaw"] = json!(yaw);
+                    capture["pitch"] = json!(pitch);
+                }
+                views.insert(label.into(),self.document.execute(capture)?);
+            }
+        }
         let mut dimensions = vec![];
         if let Some(values) = preset["dimensions"].as_array() {
             for query in values {
@@ -619,7 +641,19 @@ impl Session {
             let default = json!({"limit":256});
             crate::diagnostics::inspect(&self.document.mesh, options.unwrap_or(&default), self.document.revision())?
         };
-        Ok(json!({"name":name,"preset_version":preset["version"],"revision":self.document.revision(),"fixed_view":preset["view"],"reference":preset["reference"],"views":views,"dimensions":dimensions,"clearances":clearances,"protected_volumes":volumes,"defects":defects,"assessment":"Repeatable evidence only; read images and reports before assessing workflow requirements."}))
+        let mut report = json!({"name":name,"preset_version":preset["version"],"revision":self.document.revision(),"fixed_view":preset["view"],"reference":preset["reference"],"views":views,"dimensions":dimensions,"clearances":clearances,"protected_volumes":volumes,"defects":defects,"assessment":"Repeatable evidence only; read images and reports before assessing workflow requirements."});
+        report["source_metrics"] = crate::source_metrics::inspect(&self.document.mesh, &json!({}))?;
+        report["constraint_results"] = json!(self.workflow.constraint_results(&self.document.mesh, &report["source_metrics"])?);
+        if let Some(options) = preset.get("export") {
+            let (receipt, payload) = self.verify_export(&json!({"export":options}), &preset["version"])?;
+            report["export_verification"] = receipt;
+            if report["export_verification"]["status"]=="passed" && self.workflow.gate("export",&self.state["mesh"],self.workflow_directory()).is_none() {
+                for (key,value) in payload.as_object().unwrap() {
+                    if key=="obj" || key.ends_with("_base64") { report[key]=value.clone(); }
+                }
+            }
+        }
+        Ok(report)
     }
 
     fn reference_command(&mut self, request: &Value) -> Result<Value, String> {
@@ -947,12 +981,16 @@ impl Session {
                 }
             }
         }
-        if command == "review_run" {
+        if matches!(command,"review_run" | "export_verify") {
             write(
                 "report",
                 "review.json",
                 serde_json::to_vec_pretty(result).map_err(|e| e.to_string())?,
             )?;
+        }
+        if command == "workflow_report" && let Some(markdown) = result["markdown"].as_str() {
+            write("markdown","md",markdown.as_bytes().to_vec())?;
+            result.as_object_mut().unwrap().remove("markdown");
         }
         if command == "save" {
             write(
@@ -986,6 +1024,10 @@ impl Session {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         let texture = crate::uv::import_png(&bytes)?;
         let mut edit = serde_json::to_value(texture).map_err(|error| error.to_string())?;
+        for property in ["filter", "double_sided"] {
+            edit.as_object_mut().unwrap().remove(property);
+            if let Some(value) = request.get(property) { edit[property] = value.clone(); }
+        }
         if let Some(cutoff) = request.get("alpha_cutoff") {
             edit["alpha_cutoff"] = cutoff.clone();
         }
@@ -1022,6 +1064,11 @@ impl Session {
             Err("response must be compact or full".into())
         } else if request["command"] == "help" {
             crate::help::execute(&request)
+        } else if request["command"] == "workflow_report" {
+            self.workflow_markdown()
+        } else if request["command"] == "export_verify" {
+            if request.get("path").is_none() {Err("export_verify requires a workspace file path".into())}
+            else {self.verify_export(&request,&Value::Null).map(|(receipt,_)|receipt)}
         } else if request["command"] == "texture_import" {
             self.import_texture(&request)
         } else if request["command"] == "import_glb" {
@@ -1161,9 +1208,13 @@ impl Session {
             if !paged_query {
                 let result = output["result"].take();
                 output["result"] = responses::compact(result);
+                if command=="review_run" && let Some(receipt)=full["result"].get("export_verification") {
+                    output["result"]["export_verification"]=json!({"status":receipt["status"],"artifact_hash":receipt["artifact_hash"],"bytes":receipt["bytes"],"format":receipt["format"]});
+                }
             }
         }
-        let evidence = full["ok"] == true && matches!(request["command"].as_str(), Some("capture" | "compare_reference" | "review_run"));
+        let evidence = full["ok"] == true && (full["turn_handoff"].get("invalidated_review").is_some()
+            || matches!(request["command"].as_str(), Some("capture" | "compare_reference" | "review_run" | "export_verify" | "export")));
         let mut project_saved = self.workspace.as_ref().filter(|_| state_changed).map(|_| false);
         let persistence = (|| -> std::io::Result<()> {
             if state_changed && let Some(workspace) = &self.workspace {
@@ -1183,7 +1234,10 @@ impl Session {
 
             let trace = json!({"session":self.id,"event":id,"record":format!("/sessions/{}/events/{id}",self.id)});
             output["trace"] = trace;
-            let summary = json!({"id":id,"command":request["command"],"ok":full["ok"],"timestamp_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),"duration_ms":duration,"request_bytes":request.to_string().len(),"response_bytes":output.to_string().len(),"full_response_bytes":full.to_string().len(),"revision_before":before_revision,"revision_after":self.state["revision"],"changed":changed,"snapshot":self.snapshot});
+            let mut summary = json!({"id":id,"command":request["command"],"ok":full["ok"],"timestamp_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),"duration_ms":duration,"request_bytes":request.to_string().len(),"response_bytes":output.to_string().len(),"full_response_bytes":full.to_string().len(),"revision_before":before_revision,"revision_after":self.state["revision"],"changed":changed,"snapshot":self.snapshot});
+            if let Some(invalidated)=output["turn_handoff"].get("invalidated_review") {
+                summary["invalidated_review"]=invalidated.clone();
+            }
             let event = RecordedEvent {
                 summary: &summary,
                 input: &request,

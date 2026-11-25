@@ -1,6 +1,6 @@
 //! Static binary FBX 7.4: Y-up, right-handed, one unit per meter.
 use crate::Mesh;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 struct Node {
     name: &'static str,
@@ -105,7 +105,12 @@ fn write_node(node: &Node, bytes: &mut Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
+pub(super) fn export(
+    mesh: &Mesh,
+    visibility: &crate::render::CaptureVisibility,
+    merge: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let groups = crate::export_groups::groups(mesh, visibility, merge)?;
     // Deterministic metadata matching the fixed binary file ID and footer.
     let timestamp = node(
         "CreationTimeStamp",
@@ -190,15 +195,31 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         vec![],
         vec![node("Count", vec![integer(1)], vec![]), document],
     );
-    let count = i32::try_from(mesh.objects.len()).map_err(|_| "too many objects")?;
-    let definitions = node(
+    let count = i32::try_from(groups.len()).map_err(|_| "too many objects")?;
+    let mut bindings = BTreeMap::new();
+    if merge.is_some() && !mesh.face_textures.is_empty() {
+        for (face, vertices) in &mesh.faces {
+            if visibility.includes_vertex(&vertices[0]) {
+                let key = mesh.face_textures.get(face).map(String::as_str);
+                let id = 1000 + 2 * i64::from(count) + bindings.len() as i64;
+                bindings.entry(key).or_insert(id);
+            }
+        }
+    }
+    let material_count = i32::try_from(bindings.len()).map_err(|_| "too many materials")?;
+    let mut definitions = node(
         "Definitions",
         vec![],
         vec![
             node("Version", vec![integer(100)], vec![]),
             node(
                 "Count",
-                vec![integer(count.checked_mul(2).ok_or("too many objects")?)],
+                vec![integer(
+                    count
+                        .checked_mul(2)
+                        .and_then(|n| n.checked_add(material_count))
+                        .ok_or("too many objects")?,
+                )],
                 vec![],
             ),
             node(
@@ -216,18 +237,42 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
     let corner_normals = crate::normals::corners(mesh);
     let mut objects = vec![];
     let mut connections = vec![];
-    for (index, object) in mesh.objects.values().enumerate() {
+    if !bindings.is_empty() {
+        definitions.children.push(node(
+            "ObjectType",
+            vec![string("Material")],
+            vec![node("Count", vec![integer(material_count)], vec![])],
+        ));
+        for (binding, id) in &bindings {
+            let name = binding.unwrap_or("Unassigned");
+            objects.push(node(
+                "Material",
+                vec![
+                    identifier(*id),
+                    string(&format!("{name}\0\u{1}Material")),
+                    string(""),
+                ],
+                vec![
+                    node("Version", vec![integer(102)], vec![]),
+                    node("ShadingModel", vec![string("lambert")], vec![]),
+                ],
+            ));
+        }
+    }
+    for (index, group) in groups.iter().enumerate() {
+        let vertices = group.vertices();
+        let origin = group.members[0].1.origin;
         let model_id = 1000 + index as i64 * 2;
         let geometry_id = model_id + 1;
         let mut indices = BTreeMap::new();
         let mut positions = vec![];
-        for (index, vertex) in object.vertices.iter().enumerate() {
+        for (index, vertex) in vertices.iter().enumerate() {
             indices.insert(
                 *vertex,
                 i32::try_from(index).map_err(|_| "too many object vertices")?,
             );
             for axis in 0..3 {
-                let local = mesh.vertices[vertex][axis] - object.origin[axis];
+                let local = mesh.vertices[vertex][axis] - origin[axis];
                 if !local.is_finite() {
                     return Err("object coordinates exceed numeric range".into());
                 }
@@ -238,26 +283,54 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         let mut normals = vec![];
         let mut uv_values = vec![];
         let mut colors = vec![];
-        let has_uvs = mesh
-            .uvs
-            .keys()
-            .any(|id| object.vertices.contains(&mesh.faces[id][0]));
-        let has_colors = object
-            .vertices
+        let uv_vertices: BTreeSet<_> = group
+            .members
+            .iter()
+            .filter(|(_, member)| {
+                mesh.uvs
+                    .keys()
+                    .any(|id| member.vertices.contains(&mesh.faces[id][0]))
+            })
+            .flat_map(|(_, member)| member.vertices.iter().copied())
+            .collect();
+        let has_uvs = !uv_vertices.is_empty();
+        let has_colors = vertices
             .iter()
             .any(|id| mesh.vertex_colors.contains_key(id));
         let mut corners = 0;
+        let mut material_slots = BTreeMap::new();
+        let mut polygon_materials = Vec::new();
         for (face_id, face) in mesh
             .faces
             .iter()
-            .filter(|(_, face)| object.vertices.contains(&face[0]))
+            .filter(|(_, face)| vertices.contains(&face[0]))
         {
-            if has_uvs && !crate::uv::complete(mesh, *face_id) {
+            let mapped_source = uv_vertices.contains(&face[0]);
+            if mapped_source && !crate::uv::complete(mesh, *face_id) {
                 return Err("FBX UV export requires every corner of each UV-mapped object; inspect_uv to find missing assignments".into());
+            }
+            if !bindings.is_empty() {
+                let binding = mesh.face_textures.get(face_id).map(String::as_str);
+                let material_id = bindings[&binding];
+                let next = material_slots.len() as i32;
+                let slot = material_slots.entry(material_id).or_insert_with(|| {
+                    connections.push(node(
+                        "C",
+                        vec![string("OO"), identifier(material_id), identifier(model_id)],
+                        vec![],
+                    ));
+                    next
+                });
+                polygon_materials.extend(slot.to_le_bytes());
             }
             for (corner, vertex) in face.iter().enumerate() {
                 if has_uvs {
-                    for value in mesh.uvs[face_id][vertex] {
+                    let uv = if mapped_source {
+                        mesh.uvs[face_id][vertex]
+                    } else {
+                        [0.0, 0.0]
+                    };
+                    for value in uv {
                         uv_values.extend(value.to_le_bytes());
                     }
                 }
@@ -314,6 +387,35 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
             ],
         );
         let mut appearance_layers = Vec::new();
+        if !material_slots.is_empty() {
+            appearance_layers.push(node(
+                "LayerElementMaterial",
+                vec![integer(0)],
+                vec![
+                    node("Version", vec![integer(101)], vec![]),
+                    node("Name", vec![string("")], vec![]),
+                    node("MappingInformationType", vec![string("ByPolygon")], vec![]),
+                    node(
+                        "ReferenceInformationType",
+                        vec![string("IndexToDirect")],
+                        vec![],
+                    ),
+                    node(
+                        "Materials",
+                        vec![array(b'i', polygon_materials.len() / 4, polygon_materials)?],
+                        vec![],
+                    ),
+                ],
+            ));
+            layer.children.push(node(
+                "LayerElement",
+                vec![],
+                vec![
+                    node("Type", vec![string("LayerElementMaterial")], vec![]),
+                    node("TypedIndex", vec![integer(0)], vec![]),
+                ],
+            ));
+        }
         for (enabled, name, field, components, values) in [
             (has_uvs, "LayerElementUV", "UV", 2, uv_values),
             (has_colors, "LayerElementColor", "Colors", 4, colors),
@@ -361,14 +463,14 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
             "Geometry",
             vec![
                 identifier(geometry_id),
-                string(&format!("{}\0\u{1}Geometry", object.name)),
+                string(&format!("{}\0\u{1}Geometry", group.name)),
                 string("Mesh"),
             ],
             vec![
                 node("GeometryVersion", vec![integer(124)], vec![]),
                 node(
                     "Vertices",
-                    vec![array(b'd', object.vertices.len() * 3, positions)?],
+                    vec![array(b'd', vertices.len() * 3, positions)?],
                     vec![],
                 ),
                 node(
@@ -382,22 +484,35 @@ pub(super) fn export(mesh: &Mesh) -> Result<Vec<u8>, String> {
         );
         geometry.children.extend(appearance_layers);
         objects.push(geometry);
-        let properties = node(
+        let mut properties = node(
             "Properties70",
             vec![],
             vec![
-                vector_property("Lcl Translation", object.origin),
+                vector_property("Lcl Translation", origin),
                 vector_property("Lcl Rotation", [0.0; 3]),
                 vector_property("Lcl Scaling", [1.0; 3]),
                 property("RotationActive", "bool", vec![integer(1)]),
                 property("InheritType", "enum", vec![integer(1)]),
             ],
         );
+        if group.grouped {
+            properties.children.push(node(
+                "P",
+                vec![
+                    string("sourcePivots"),
+                    string("KString"),
+                    string(""),
+                    string("U"),
+                    string(&group.pivots().to_string()),
+                ],
+                vec![],
+            ));
+        }
         objects.push(node(
             "Model",
             vec![
                 identifier(model_id),
-                string(&format!("{}\0\u{1}Model", object.name)),
+                string(&format!("{}\0\u{1}Model", group.name)),
                 string("Mesh"),
             ],
             vec![

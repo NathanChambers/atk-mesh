@@ -1,11 +1,15 @@
 ---
 name: atk-mesh
-description: Use the installed Mesh Workbench CLI to create, edit, inspect, render, or export 3D meshes. Apply when the user invokes $atk-mesh, requests work on a Mesh Workbench workspace, or asks to use atk-mesh-cli or atk-mesh for modeling.
+description: Create, edit, inspect, render, or export 3D meshes in Mesh Workbench. Use for modeling requests in a workbench project, including turning existing artwork into a 3D asset, or when the user names atk-mesh.
 ---
 
 # atk-mesh
 
+When this skill is invoked, use the Mesh Workbench CLI command workflow for the requested work unless the user explicitly specifies another method. For modeling tasks, author the mesh in the target workspace with CLI modeling commands. Scripts may prepare and submit CLI command batches. If the CLI cannot perform a required operation, explain the limitation and ask before switching to external authoring.
+
 ## Select the workspace
+
+- When modeling from an existing design, look for editable source in the consuming project. For ATK Vector, look under `.vector/sessions/` and pass the project and session to `atk-vector-cli`. Use `inspect` for part IDs, `bounds` for proportions, and `contours` for outlines. Map artboard points to the chosen model plane and scale before extrusion. Choose depth and bevel in Mesh Workbench. Open paths and holes need different treatment from solid outer polygons.
 
 - Verify that `atk-mesh-cli` and `atk-mesh` are on PATH. If missing, use `cargo install --path . --locked` from the Mesh Workbench source checkout when installation is in scope.
 - Use the workspace and editor port specified by the user or project. If a project viewer is running, list saved workspaces with `atk-mesh-cli --port VIEWER_PORT --list-workspaces`.

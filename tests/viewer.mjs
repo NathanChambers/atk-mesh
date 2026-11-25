@@ -887,3 +887,20 @@ test('collection branches preserve expansion, reveal search results and sync dup
         environment.restore();
     }
 });
+
+test('rotated nonuniform instance stretches preserve inverse-transpose smooth normals', () => {
+    const vertices = { ...mesh.vertices, 5: [1, 1, -2], 6: [-1, 1, -2] };
+    const faces = { 1: [1,2,3,4], 2: [4,3,5,6] };
+    const source = Object.keys(vertices).map(Number);
+    for (const id of source) {
+        const [x,y,z] = vertices[id];
+        vertices[id+6] = [-y*2,x,z*4];
+    }
+    faces[3] = faces[1].map(id => id+6);
+    faces[4] = faces[2].map(id => id+6);
+    const instance = { master: 1, scale: [1,2,4], rotation: [[0,-1,0],[1,0,0],[0,0,1]], faces: {1:3,2:4} };
+    const objects = { 1: { vertices:source, smooth_angle:120 }, 2:{ vertices:source.map(id => id+6), smooth_angle:120, instance } };
+    const actual = buildCornerNormals({vertices, faces, objects})[2][2];
+    const expected = [-2/Math.sqrt(5), 0, 1/Math.sqrt(5)];
+    for (let axis=0; axis<3; axis++) { assert.ok(Math.abs(actual[axis]-expected[axis]) < 1e-10); }
+});

@@ -356,6 +356,11 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
     let object = mesh.objects.get(&id).ok_or("unknown object")?.clone();
     crate::instances::placement(mesh, id, command, request)?;
     match command {
+        "object_scale" => {
+            if object.instance.is_none() {
+                return Err("object_scale requires a linked instance".into());
+            }
+        }
         "object_review_plan" | "object_review_check" => {
             return crate::object_review::edit(mesh.objects.get_mut(&id).unwrap(), command, request);
         }

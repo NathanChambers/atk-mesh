@@ -58,6 +58,7 @@ A native workspace can store a bone hierarchy, per-vertex skin weights, and name
 
 - `rig_set` replaces the rig, including any existing weights and clips. Supply parents before children. Bone positions are world-space rest pivots with axes aligned to the rest mesh. `rig_clear` removes the rig.
 - Supply an optional `tail:[x,y,z]` on a bone to set its display endpoint in world-space rest coordinates. Update an existing rig with `{"command":"rig_display_tails_set","tails":{"arm":[1,1.4,0]}}`. Use null to clear a tail. Tails affect the viewer overlay only.
+- Use `{"command":"rig_rotation_limits_set","limits":{"wrist":{"axis":[0,-1,0],"max_swing":55,"twist":[-25,25]}}}` to set local joint limits. The nonzero axis is expressed in the bone's rest axes. Swing limits the tilt away from that axis. Twist is a signed range around it and must include zero. All angles are in degrees. For a hinge, set `max_swing` to zero and use the hinge axis for twist. Use null to clear a limit. Limits apply after clip interpolation in the viewer and pose captures. GLB export bakes constrained motion at 60 Hz, with step tracks kept as step tracks. Authored keys stay editable.
 - `skin_weights_set` updates the supplied vertex IDs. Use one to four unique positive influences summing to one, or an empty list to clear that vertex. Unweighted vertices display at rest. Deleted vertices lose their bindings, and new vertices need weights.
 - `animation_set` creates or replaces a named clip. Key times are seconds in strict ascending order. Translation offsets and XYZ rotations (degrees, applied X then Y then Z) are parent-relative. Translation interpolates linearly and rotation follows the shortest quaternion path. Tracks hold their endpoint poses outside the keyed interval. Match the start and end poses for a seamless loop. `animation_remove` deletes a named clip.
 - `query_rig` lists bones, weighted vertex count and clips. Add `response:"full"` to read all authored data. Changes are undoable and saved with the workspace.
@@ -509,6 +510,8 @@ Run `cargo test` for engine and CLI integration checks. Run `npm test` for viewe
 
 For localized work, query `{"command":"inspect_region","faces":[40]}` and capture a closeup with `{"command":"capture","center":[0,2.14,0.48],"zoom":650}`. The optional camera `center` defaults to the origin and is included in capture metadata. Image selection uses the same centered projection.
 
+Capture metadata includes `thin_features` for the declared camera and output resolution. Set `thin_feature_pixels` to a positive threshold (default 2). The report counts short authored edges and narrow faces with all vertices in frame, including occluded geometry. Face width is the span perpendicular to the longest projected perimeter edge. Counts and location samples are advisory until a project constraint applies.
+
 Choose capture detail with `width` and `height`, for example `{"command":"capture","width":400,"height":300}` for a quick check or `{"command":"capture","width":1600,"height":1200}` for a detailed view. Each dimension must be an integer from 64 to 4096, with at most 4,194,304 pixels total. Omitted dimensions independently default to 800 and 600. All render modes support the same sizes. Zoom is measured in pixels/unit at the 800×600 reference resolution, then multiplied by `min(width/800, height/600)`, preserving framing at the same aspect ratio. Other aspect ratios expand the field of view along the longer axis. `camera.pixels_per_unit` reports the effective projection scale. `select_image.rect` always uses actual output-image pixel coordinates. Dimensions, command input and render results are retained in the workspace replay log.
 
 ## Curved surfaces and detailed props
@@ -689,7 +692,31 @@ Joining combines ownership; it does not weld vertices, bridge gaps, union inters
 
 Both commands use normal atomic document edits, revision guards, undo/redo, workspace persistence and replay. They do not bypass workflow requirements. Discover them in JSON `help` under `geometry_cleanup`.
 
+### Measuring the source mesh
+
+`inspect` and saved reviews include `source_metrics`. Object and material totals count triangles and authored face corners, including corners carrying UV or color values. Texels per meter is the square root of mapped texture area divided by its corresponding surface area. A null density indicates insufficient mapped surface area. Projection and generator regions are checked per UV corner, including corners moved by later UV edits.
+
+Each connected shell reports boundary and non-manifold edge counts. Fold candidates identify face pairs with a normal change greater than 170 degrees. The overlap scan reports its completeness, tested triangle pairs, and detected contacts. The closed-shell integrity gate checks inconsistent winding, inward orientation, and unintended overlap within the same closed shell. Declared contact allowances apply to overlap findings. Back-facing pixels and projected feature widths are measured from each capture's camera.
+
+Supply `constraints` on a project or object `workflow_assess` for `intent`. For example, `{"command":"workflow_assess","requirement":"intent","object":1,"assessment":"Closed housing with a ground pivot","evidence":[],"constraints":{"closed_surfaces":true,"pivot":[0,0,0],"max_triangles":2000}}`. Completion and export evaluate the saved constraints against the current mesh and return the failed metric, target, and measured result. Counts support `max_triangles`, `max_corners`, `max_uv_corners`, and `max_painted_corners`. `max_texture_size` bounds the longest side of any assigned image. For a project-level pivot constraint, every object origin is checked.
+
+`min_wall_thickness` takes a positive distance in meters. Its report describes the sampling method and coverage. `clearance` accepts `minimum` and the surface selectors `a` and `b`. In an object intent, `a` defaults to that object. `protected_volume` accepts the bounds used by `inspect_volume`. `thin_features` accepts a capture `camera`, `threshold_pixels`, and allowed `max_faces` and `max_edges` counts. These depend on the declared camera and resolution.
+
+### Instance scale
+
+`object_instance` accepts an optional `scale` number or three positive factors in master-local axes. Use `{"command":"object_scale","object":2,"value":[2,1,0.5]}` to multiply the placement scale of a linked instance. The instance keeps its master link through save, reload, and later master edits. Captures, viewer geometry, and mesh exports transform its shading normals using the inverse transpose.
+
 ## Explicit construction and named components
+
+`sweep`, `loft`, `revolve`, and `extrude_polygon` accept an optional UV layout. Supply normalized side and cap rectangles as `[u_min,v_min,u_max,v_max]` and an optional inset measured in UV units.
+
+```json
+{"command":"sweep","name":"Bent tube","profile":[[-0.1,-0.1],[0.1,-0.1],[0.1,0.1],[-0.1,0.1]],"path":[[0,0,0],[0,1,0],[0.4,2,0]],"uv":{"side_region":[0,0,0.75,1],"cap_region":[0.75,0,1,1],"padding":0.01}}
+```
+
+U follows the section profile and V follows the sweep or loft path. On a revolution U follows the radius-height profile and V follows the rotation. Closed profiles have distinct UV corners at their seam. Planar end caps share the cap rectangle in two separate islands when both ends are capped. Component recipes retain the target regions for later inspection. During regeneration an explicit UV layout takes precedence over transferred UVs.
+
+For new projects, a polygon or stroke mask supplied while creating a texture layer or defining a named mask starts with zero background coverage. An explicit `fill` overrides the default. Projects loaded from versions 1–8 retain the historical full-background default. Layer add and set replies include `coverage`, the mean resolved mask value over the texture, before layer opacity and visibility.
 
 Generating geometry into an existing `object` now **requires** `mode:"append"` or `mode:"replace_region"`. This applies to `object_add_box`, `object_profile`, `extrude_polygon`, `revolve`, `sweep`, `loft` and `quad_strip`. Update older recipes by adding the intended mode. An object ID communicates ownership only. Creating a new named object can omit the mode.
 
@@ -697,6 +724,13 @@ Generating geometry into an existing `object` now **requires** `mode:"append"` o
 {"command":"extrude_polygon","object":59,"mode":"append","region":"cab_upper","points":[[0,0],[2,0],[2,1],[0,1]],"depth":3.2}
 {"command":"extrude_polygon","object":59,"mode":"replace_region","region":"cab_upper","points":[[0,0],[2.1,0],[2,1],[0,1]],"depth":3.2}
 {"command":"query_components","object":59,"offset":0,"limit":16,"response":"full"}
+```
+
+Use `query_components` with `report:"triangles"` to rank authored components by their triangulated cost. Each row gives the triangle count, percentage of the whole asset, and axis-aligned XYZ dimensions in model units. Filter with `object` or `objects`, and optionally `region` or explicit `faces`. Add `selection:true` to include only faces whose vertices are all selected. The `scope` total counts each matching face once, even when named regions overlap. The `unassigned` total covers matching faces outside all named components. Empty scopes have zero triangles and null dimensions. Results support `offset`, `limit` and `revision`.
+
+```json
+{"command":"query_components","report":"triangles","limit":10}
+{"command":"query_components","report":"triangles","selection":true}
 ```
 
 Each generator returns `operation.component_id`, `region`, `mode`, `bounds`, `geometry_counts`, `created_vertices`, `created_face_ids`, and `removed_faces`, alongside its existing generator-specific receipt. Regions have globally unique names; omit `region` to get `component-N`. Existing names require replacement explicitly. The same component ID survives replacement. Query component records with `query_components`; page with `next_offset`, and use `response:"full"` for exact face/vertex arrays and saved recipes. Operation metadata keys/scalar IDs remain visible in compact replies; large arrays still use count/sample/path metadata and `query_record` retrieval.
@@ -765,6 +799,21 @@ Surface findings are paged with `next_offset`; `max_pairs` defaults 250,000 and 
 ```
 
 Definitions contain numeric parameters and 1..64 generator steps with explicit object, append mode and distinct region names. Parameter descriptors evaluate `parameter * scale + offset` recursively in command data; omitted scale/offset mean 1/0. `construction_apply` regenerates all dependent steps in recorded order as one atomic edit, initially appending each missing region and subsequently replacing it. Failed parameters/construction restore everything. All participating steps share the same parameter values. Manual details within replaced regions are deliberately replaced; details sharing vertices require surface repair instead. This is an explicit recorded construction recipe, not an inferred constraint solver or unrestricted scripting language. Query parameter plans with paged `query_constructions` and generated face records with `query_components`; use `response:"full"` for exact saved data.
+
+## Export verification and workflow reports
+
+Define the same preset in each workspace to compare variants at identical world-space scale. `standard_views:true` adds front, side, top, three-quarter, and intended-camera material captures. All inherit the fixed center, projection scale and resolution from `view`.
+
+```json
+{"command":"review_define","name":"asset","view":{"width":800,"height":600,"center":[0,3,0],"zoom":75,"yaw":35,"pitch":12},"standard_views":true,"export":{"format":"glb"}}
+{"command":"review_run","name":"asset"}
+```
+
+An optional `export` object passes the format and options to the exporter during the review. Preflight produces the receipt before the export gate. A passed review also returns the model artifact when the standard export gate permits delivery. The report includes the source revision, preset version, options, artifact hash, source measurements, and findings from inspecting the exported bytes. Static GLB geometry is reimported in memory. The receipt identifies unsupported reimport features. OBJ and STL record pivot limitations. Use the report artifact for the full measurements.
+
+To check an existing workspace file, send `{"command":"export_verify","path":"exports/asset.glb"}`. This validates the file and reports its settings. Add `"baseline":"source"` to compare against a fresh export of the current revision, optionally supplying `"export":{"format":"glb","merge":"all"}`. Alternatively, pass a workspace-relative verification receipt or review report path as `baseline`. A receipt with `status:"failed"` identifies the invalid structure or mismatched field. Register a successful trace with `workflow_resource`, `kind:"evidence"`, and `capture:"report"`.
+
+Send `{"command":"workflow_report"}` to generate a Markdown artifact from workflow state and recorded events. Use `--output workflow.md` to copy it. The report lists assessments, remaining checks, evidence, recorded invalidations, export artifacts, verification results, object stages, and workspace-linked feedback. Include a `workspace` path in a local `feedback_submit` request to link the submission. A project intent assessment can set `require_production_ready:true` to require that object stage for workflow completion. The completion reply lists the actual stages.
 
 ## Saved reference reviews
 
@@ -863,7 +912,7 @@ The browser's mode menu and CLI `capture` provide complementary inspection views
 | `uv_checker` | UV scale, continuity and distortion | Unlit 8×8 repeating checker; incomplete face mappings are magenta |
 | `textured` | Direct image mapping and painted tint | Unlit nearest-sampled repeating texture multiplied by interpolated vertex RGB; unassigned texture is gray and missing UVs are magenta |
 | `vertex_colors` | Vertex painting and interpolation | Unlit normalized RGB, interpolated across polygon fan triangles; unpainted vertices are white |
-| `orientation` | Reversed faces | Front-facing gray, back-facing red; double-sided rasterization |
+| `orientation` | Face orientation. Capture metadata includes depth-visible back-facing and total surface pixel counts, and their ratio (null for an empty frame). | Front-facing gray, back-facing red; double-sided rasterization |
 
 Use multiple views together. Face and object colors are categorical IDs, not materials. Object IDs use the same palette order in the browser, inspector and CLI; hiding objects does not reassign browser colors. CLI example: `{"command":"capture","mode":"object_ids"}`. Use capture metadata for exact PNG identification; browser edges can be antialiased. Colors may change after objects are added or removed. CLI captures ignore browser visibility; use `hide_objects` or `solo_objects` explicitly to filter them. A color difference can mark a coplanar face boundary without a geometric step. Colors are unique per capture and the returned mapping is authoritative; topology changes can reassign colors. PNG face-ID pixels are unlit and un-antialiased for exact decoding. Browser edge pixels may be blended by GPU antialiasing. Both renderers use the same vivid palette sequence; exact identification should use the capture's mapping rather than visual color names.
 
@@ -894,6 +943,7 @@ This toolset exposes explicit values. An agent chooses coordinates, colors, seam
 | `capture_uv` | Optional `object`, `faces`, `texture`, `size` (64–2048, default 512), `bounds:[min_u,min_v,max_u,max_v]` (default `[0,0,1,1]`). PNG/SVG layout with pink mapped edges over the named texture or checker. Missing endpoints leave gaps. Includes revision, inspection summary and a query template for exact corner IDs/values. |
 | `texture_import` | `name`, `path` to a PNG inside the model workspace. Normalizes to embedded RGBA pixels; redefining a name updates every face using it. |
 | `texture_define` | `name`, `width`, `height`, `rgba_base64`: direct pixel assignment for experiments. RGBA8 bytes, top-to-bottom rows, four bytes per pixel. |
+| `texture_settings` | `texture:"name"`, optional `filter:"linear"|"nearest"`, `double_sided:true|false`. Updates the shared material used by every face assigned to that texture. Creation and import commands accept both settings. Query them with `query_uv {kind:"textures"}`. Its sidedness suggestion records open boundary edges on assigned faces. |
 | `texture_assign` | `texture:"name"`, optional `object`, `faces`. Assigns an existing image to faces; `texture:null` clears bindings. UVs may be assigned before or after the image. |
 | `texture_remove` | `texture:"name"`. Removes an unassigned image; clear face bindings first. |
 | `texture_export` | `texture:"name"`. Read-only PNG output using the normal artifact response and CLI `--output image.png`. Preserves image alpha. |
@@ -907,7 +957,7 @@ UVs are stored by stable face ID and vertex ID (`mesh.uvs[face][vertex]`). A sin
 
 Texture names and face bindings live in `mesh.textures` and `mesh.face_textures`. Images are limited to 1024×1024 each and 4,194,304 pixels total per project; PNG input is limited to 8 MiB and animation is rejected. Normalized RGBA data is embedded in native projects and replay snapshots, so a later edit/deletion of the source PNG does not alter the registered texture. Reimport explicitly to update it. The HTTP request limit is 64 MiB. Layer sources and baked maps together have a 32 MiB decoded image budget. Pixel data increases project/replay size and live-state transfer size; use small textures when experimenting.
 
-Sampling is nearest-neighbor with repeating U/V and the origin at the bottom left. Textures without an alpha cutoff use their authored RGB in surface previews. Set `alpha_cutoff:0.5` on `texture_import` or `texture_define` to discard texels below the threshold in `textured` and `material` views. The threshold accepts 0 through 1. Texels at or above it use their RGB as opaque color. Use **Base color** in the viewer for unlit sprites, and use the axis gizmo and projection button below the render toolbar for an axis-aligned orthographic view. Painted values live in `mesh.vertex_colors[vertex]`. Unpainted vertices contribute white when interpolating or tinting a texture. The `vertex_colors` and `textured` modes show unlit display RGB. The `shaded` mode retains neutral lighting. Captures and the browser offer `uv_checker`, `textured` and `vertex_colors`. These three modes require clean captures. Textured mode multiplies sampled RGB by interpolated vertex color.
+UVs repeat with the origin at the bottom left. Base-color inspection samples individual texels. Material previews and GLB exports use the texture filter. New version 9 projects use linear filtering with mipmaps. Existing projects retain nearest filtering until explicitly changed. Materials default to double-sided. Textures without an alpha cutoff use their authored RGB in surface previews. Set `alpha_cutoff:0.5` on `texture_import` or `texture_define` to discard texels below the threshold in `textured` and `material` views. The threshold accepts 0 through 1. Texels at or above it use their RGB as opaque color. Use **Base color** in the viewer for unlit sprites, and use the axis gizmo and projection button below the render toolbar for an axis-aligned orthographic view. Painted values live in `mesh.vertex_colors[vertex]`. Unpainted vertices contribute white when interpolating or tinting a texture. The `vertex_colors` and `textured` modes show unlit display RGB. The `shaded` mode retains neutral lighting. Captures and the browser offer `uv_checker`, `textured` and `vertex_colors`. These three modes require clean captures. Textured mode multiplies sampled RGB by interpolated vertex color.
 
 After creating a cube with `{"command":"cube"}`, assign four explicit corners and tint two vertices:
 
@@ -1080,6 +1130,12 @@ A direct `object_move` on a linked master reports `operation.linked_instances_un
 Deleting an instance leaves its master intact. A master with linked followers cannot be deleted until its instances are detached or deleted. Links survive save/load, undo/redo and workspace replay. Existing projects load without conversion. Copies inherit source collection memberships initially, and can then be organized independently.
 
 The master owns editable shape data. World-space instance geometry is currently materialized for stable picking IDs and the existing renderer/export pipeline, so this feature reduces modeling commands, not mesh storage or GPU draw calls. OBJ and FBX export each copy as a separate mesh object with its own pivot and resolved geometry; they do not preserve the internal link as a shared engine mesh resource.
+
+### Export-only consolidation
+
+For GLB, FBX, and OBJ exports use `merge:"all"` for a single mesh or `merge:"collection"` to combine members by primary collection. With no primary collection, the lowest-numbered membership wins. Objects without a collection export separately. Each group uses its lowest-numbered member's pivot. The project retains all source objects, placements, and links. Each merged group records the source names, IDs and world pivots in `sourcePivots` metadata (GLB node extras, FBX model property, or OBJ comment). OBJ vertices are world-space and OBJ readers may discard comments.
+
+Merged FBX writes source corner normals, UVs, and named material slots. On a merged mesh with a UV layer, corners from wholly unmapped source objects receive (0,0). Merged OBJ writes explicit corner normals and `usemtl` boundaries. FBX and OBJ users can bind the separately exported images to those slots.
 
 ### Linking existing scene objects
 

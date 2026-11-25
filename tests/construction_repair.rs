@@ -2,6 +2,32 @@ use gpt_mesh::Document;
 use serde_json::json;
 
 #[test]
+fn triangle_report_ranks_overlapping_regions_and_measures_selected_faces() {
+    let mut document = Document::default();
+    for (name, faces) in [("panel", vec![1]), ("housing", vec![1, 2, 3])] {
+        document.execute(json!({"command":"region_define","object":1,"name":name,"faces":faces})).unwrap();
+    }
+    let query = json!({"command":"query_components","report":"triangles","limit":1});
+    let result = document.execute(query.clone()).unwrap();
+    assert_eq!(result["items"][0]["region"], "housing");
+    assert_eq!(result["items"][0]["triangles"], 6);
+    assert_eq!(result["items"][0]["asset_percent"], 50.0);
+    assert_eq!(result["asset_triangles"], 12);
+    assert_eq!(result["scope"]["triangles"], 12);
+    assert_eq!(result["unassigned"]["triangles"], 6);
+    assert_eq!(result["next_offset"], 1);
+
+    let saved = document.execute(json!({"command":"save"})).unwrap();
+    document.execute(json!({"command":"select","vertices":saved["mesh"]["faces"]["1"]})).unwrap();
+    let mut selected = query;
+    selected["selection"] = json!(true);
+    let result = document.execute(selected).unwrap();
+    assert_eq!(result["scope"]["triangles"], 2);
+    assert_eq!(result["scope"]["dimensions"].as_array().unwrap().iter().filter(|v| v.as_f64() == Some(0.0)).count(), 1);
+    assert_eq!(result["unassigned"]["dimensions"], serde_json::Value::Null);
+}
+
+#[test]
 fn explicit_generation_and_named_replacement_are_atomic() {
     let mut document = Document::default();
     let shape = json!({"command":"extrude_polygon","object":1,"mode":"append","region":"cab_upper","points":[[0,0],[2,0],[2,1],[0,1]],"depth":0.3,"center":[0,3,0]});

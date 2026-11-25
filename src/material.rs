@@ -1,36 +1,151 @@
 use crate::{normals::unit, projection::dot, uv::Texture};
 use std::collections::BTreeMap;
 
-pub(super) struct Prepared {
+pub(super) struct Gradients {
+    dx: [f64; 3],
+    dy: [f64; 3],
+}
+
+impl Gradients {
+    pub fn new(points: [[f64; 3]; 3], uv: [[f64; 2]; 3], perspective: bool) -> Self {
+        let [a, b, c] = points;
+        let det = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        let weighted = std::array::from_fn::<_, 3, _>(|i| {
+            let q = if perspective { points[i][2] } else { 1.0 };
+            [uv[i][0] * q, uv[i][1] * q, q]
+        });
+        let dx = std::array::from_fn(|k| {
+            ((weighted[1][k] - weighted[0][k]) * (c[1] - a[1])
+                - (weighted[2][k] - weighted[0][k]) * (b[1] - a[1]))
+                / det
+        });
+        let dy = std::array::from_fn(|k| {
+            ((weighted[2][k] - weighted[0][k]) * (b[0] - a[0])
+                - (weighted[1][k] - weighted[0][k]) * (c[0] - a[0]))
+                / det
+        });
+        Self { dx, dy }
+    }
+
+    pub fn lod(&self, uv: [f64; 2], q: f64, dimensions: [f64; 2]) -> f64 {
+        let length = |gradient: [f64; 3]| {
+            let du = (gradient[0] - uv[0] * gradient[2]) * dimensions[0] / q;
+            let dv = (gradient[1] - uv[1] * gradient[2]) * dimensions[1] / q;
+            du.hypot(dv)
+        };
+        length(self.dx).max(length(self.dy)).max(1.0).log2()
+    }
+}
+
+struct Level {
     width: usize,
     height: usize,
+    pixels: Vec<u8>,
+}
+
+impl Level {
+    fn downsample(&self) -> Self {
+        let width = (self.width / 2).max(1);
+        let height = (self.height / 2).max(1);
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let mut sum = [0u32; 4];
+                let mut count = 0;
+                for sy in y * self.height / height..(y + 1) * self.height / height {
+                    for sx in x * self.width / width..(x + 1) * self.width / width {
+                        for (channel, value) in sum.iter_mut().enumerate() {
+                            *value += self.pixels[4 * (sy * self.width + sx) + channel] as u32;
+                        }
+                        count += 1;
+                    }
+                }
+                pixels.extend(sum.map(|value| ((value + count / 2) / count) as u8));
+            }
+        }
+        Self {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    fn bilinear(&self, uv: [f64; 2]) -> [f64; 4] {
+        let x = uv[0].rem_euclid(1.0) * self.width as f64 - 0.5;
+        let y = (1.0 - uv[1].rem_euclid(1.0)) * self.height as f64 - 0.5;
+        let mut color = [0.0; 4];
+        for (dy, wy) in [(0, 1.0 - (y - y.floor())), (1, y - y.floor())] {
+            for (dx, wx) in [(0, 1.0 - (x - x.floor())), (1, x - x.floor())] {
+                let sx = (x.floor() as isize + dx).rem_euclid(self.width as isize) as usize;
+                let sy = (y.floor() as isize + dy).rem_euclid(self.height as isize) as usize;
+                let offset = (sy * self.width + sx) * 4;
+                for (channel, value) in color.iter_mut().enumerate() {
+                    *value += wx * wy * f64::from(self.pixels[offset + channel]) / 255.0;
+                }
+            }
+        }
+        color
+    }
+}
+
+pub(super) struct Prepared {
+    pub dimensions: [f64; 2],
+    pub double_sided: bool,
+    linear: bool,
     alpha_cutoff: Option<f64>,
-    maps: BTreeMap<String, Vec<u8>>,
+    maps: BTreeMap<String, Vec<Level>>,
 }
 
 impl Prepared {
     pub fn new(texture: &Texture) -> Result<Self, String> {
+        let linear = texture.filter == Some(crate::uv::Filter::Linear);
         let mut maps = BTreeMap::new();
         for name in ["base_color", "normal", "roughness", "metallic", "specular"] {
-            maps.insert(name.into(), crate::painting::map_pixels(texture, name)?);
+            let pixels = crate::painting::map_pixels(texture, name)?;
+            let mut levels = vec![Level {
+                width: texture.width,
+                height: texture.height,
+                pixels,
+            }];
+            if linear {
+                while levels
+                    .last()
+                    .is_some_and(|level| level.width > 1 || level.height > 1)
+                {
+                    let level = levels.last().unwrap().downsample();
+                    levels.push(level);
+                }
+            }
+            maps.insert(name.into(), levels);
         }
         Ok(Self {
-            width: texture.width,
-            height: texture.height,
+            dimensions: [texture.width as f64, texture.height as f64],
+            double_sided: texture.double_sided,
             alpha_cutoff: texture.alpha_cutoff,
+            linear,
             maps,
         })
     }
 
-    pub fn masked(&self, uv: [f64; 2]) -> bool {
-        let index = crate::uv::texel_offset(self.width, self.height, uv);
-        crate::uv::below_cutoff(self.alpha_cutoff, self.maps["base_color"][index + 3])
+    fn sample(&self, name: &str, uv: [f64; 2], lod: f64) -> [f64; 4] {
+        let levels = &self.maps[name];
+        let base = &levels[0];
+        if !self.linear {
+            let index = crate::uv::texel_offset(base.width, base.height, uv);
+            return std::array::from_fn(|axis| f64::from(base.pixels[index + axis]) / 255.0);
+        }
+        let lod = lod.clamp(0.0, (levels.len() - 1) as f64);
+        let a = levels[lod.floor() as usize].bilinear(uv);
+        if lod.fract() == 0.0 {
+            return a;
+        }
+        let b = levels[lod.ceil() as usize].bilinear(uv);
+        std::array::from_fn(|axis| a[axis] + (b[axis] - a[axis]) * lod.fract())
     }
 
-    pub fn sample(&self, name: &str, uv: [f64; 2]) -> [f64; 3] {
-        let index = crate::uv::texel_offset(self.width, self.height, uv);
-        let pixels = &self.maps[name];
-        std::array::from_fn(|axis| f64::from(pixels[index + axis]) / 255.0)
+    pub fn masked(&self, uv: [f64; 2], lod: f64) -> bool {
+        self.alpha_cutoff
+            .is_some_and(|cutoff| self.sample("base_color", uv, lod)[3] < cutoff)
     }
 }
 
@@ -60,13 +175,18 @@ pub(super) fn frame(points: [[f64; 3]; 3], uvs: [[f64; 2]; 3]) -> Option<[[f64; 
 pub(super) fn shade(
     material: Option<&Prepared>,
     uv: [f64; 2],
+    lod: f64,
     paint: [f64; 3],
     normal: [f64; 3],
     frame: Option<[[f64; 3]; 2]>,
     view: [f64; 3],
+    back_facing: bool,
 ) -> [u8; 3] {
     let sample = |name: &str, default: [f64; 3]| {
-        material.map_or(default, |material| material.sample(name, uv))
+        material.map_or(default, |material| {
+            let rgba = material.sample(name, uv, lod);
+            [rgba[0], rgba[1], rgba[2]]
+        })
     };
     let base = sample("base_color", [0.5; 3]);
     let base: [f64; 3] = std::array::from_fn(|axis| (base[axis] * paint[axis]).powf(2.2));
@@ -90,7 +210,7 @@ pub(super) fn shade(
         }));
     }
     let view = unit(view);
-    if dot(normal, view) < 0.0 {
+    if back_facing {
         n = n.map(|value| -value);
     }
     let ambient = 0.06 + 0.18 * (n[1] * 0.5 + 0.5);
