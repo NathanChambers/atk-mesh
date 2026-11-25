@@ -916,6 +916,10 @@ impl Session {
         self.state.clone()
     }
 
+    pub fn revision(&self) -> u64 {
+        self.document.revision()
+    }
+
     pub fn workspace(&self) -> Option<&std::path::Path> {
         self.workspace.as_deref()
     }

@@ -574,6 +574,84 @@ test('viewer polls read-only state, applies edits, skips selection-only uploads 
 });
 
 
+test('project viewer refreshes on push and catches up when the stream reconnects', async () => {
+    const environment = browserEnvironment();
+    environment.window.location = new URL('http://localhost/?workspace=model');
+    const requests = [];
+    const timers = new Map();
+    let nextTimer = 1;
+    let time = Date.now();
+    let revision = 1;
+    let stream;
+    environment.replace('Date', class extends Date {
+        static now() { return time; }
+    });
+    environment.replace('setTimeout', (callback, delay) => {
+        const id = nextTimer++;
+        timers.set(id, { callback, delay });
+        return id;
+    });
+    environment.replace('clearTimeout', id => timers.delete(id));
+    environment.replace('EventSource', class extends EventTarget {
+        static CLOSED = 2;
+
+        constructor(url) {
+            super();
+            this.url = url;
+            this.closed = false;
+            stream = this;
+        }
+
+        close() {
+            this.closed = true;
+        }
+    });
+    environment.replace('fetch', async path => {
+        requests.push(path);
+        const result = path === '/workspaces' ? { mode: 'viewer', workspaces: [] }
+            : path.startsWith('/state/meta') ? { tag: null } : { mesh, revision };
+        return { json: async () => ({ ok: true, result }) };
+    });
+    const element = id => environment.document.getElementById(id);
+    try {
+        await import('../web/app.js?project-events');
+        await new Promise(setImmediate);
+        assert.equal(stream.url, '/api/events?workspace=model');
+        stream.dispatchEvent(new Event('open'));
+        await new Promise(setImmediate);
+
+        requests.length = 0;
+        revision = 2;
+        stream.dispatchEvent(new Event('change'));
+        await new Promise(setImmediate);
+        assert.deepEqual(requests, ['/state?workspace=model']);
+        assert.equal(element('revision').textContent, 'rev 2');
+
+        stream.dispatchEvent(new Event('error'));
+        await new Promise(setImmediate);
+        revision = 3;
+        stream.dispatchEvent(new Event('open'));
+        await new Promise(setImmediate);
+        assert.equal(element('revision').textContent, 'rev 3');
+
+        const closedStream = stream;
+        closedStream.readyState = 2;
+        closedStream.dispatchEvent(new Event('error'));
+        await new Promise(setImmediate);
+        assert.equal(stream, closedStream, 'a failed stream is not reopened immediately');
+        time += 1000;
+        const [timerId, timer] = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+        timers.delete(timerId);
+        await timer.callback();
+        assert.notEqual(stream, closedStream, 'fallback refresh retries SSE after the delay');
+
+        environment.window.dispatchEvent(new Event('pagehide'));
+        assert.equal(stream.closed, true);
+    } finally {
+        environment.restore();
+    }
+});
+
 test('project viewer scopes selection and polls saved revisions without writing', async () => {
     const environment = browserEnvironment();
     const url = new URL('http://localhost/?workspace=models%2Ffin');

@@ -127,6 +127,68 @@ fn get_json(port: u16, path: &str) -> (u16, Value) {
     (status, serde_json::from_str(&body).unwrap())
 }
 
+fn connect_updates(port: u16, query: &str) -> BufReader<TcpStream> {
+    let mut connection = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    connection.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write!(connection, "GET /api/events{query} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let mut reader = BufReader::new(connection);
+    let mut headers = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+        if line == "\r\n" {
+            break;
+        }
+        headers.push_str(&line);
+    }
+    assert!(headers.starts_with("HTTP/1.1 200"));
+    assert!(headers.contains("Content-Type: text/event-stream"));
+    assert_eq!(read_update(&mut reader), ": connected");
+    reader
+}
+
+fn read_update(reader: &mut BufReader<TcpStream>) -> String {
+    let mut message = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+        if line == "\n" {
+            return message.trim_end().to_owned();
+        }
+        message.push_str(&line);
+    }
+}
+
+#[test]
+fn viewer_updates_cover_partial_batches_and_saved_edits() {
+    let (viewer, viewer_port) = start_server(true);
+    let (_editor, editor_port) = start_server_at(false, Some(viewer.workspace.join("model")), true);
+    let query = "?workspace=model";
+    let mut editor_events = connect_updates(editor_port, "");
+    let mut saved_events = connect_updates(viewer_port, query);
+
+    let before = get_json(editor_port, "/state").1["result"]["revision"].as_u64().unwrap();
+    let batch = r#"[
+        {"command":"object_create_box","name":"Part","min":[2,0,0],"max":[3,1,1]},
+        {"command":"invalid_command"}
+    ]"#;
+    let output = invoke(editor_port, &["--batch"], batch);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(read_update(&mut editor_events), "event: change\ndata: {}");
+    assert_eq!(read_update(&mut saved_events), "event: change\ndata: {}");
+
+    let (_, saved) = get_json(viewer_port, &format!("/state{query}"));
+    assert_eq!(saved["result"]["revision"].as_u64().unwrap(), before + 1);
+    assert!(saved["result"]["mesh"]["objects"].as_object().unwrap().values().any(|object| object["name"] == "Part"));
+
+    drop(saved_events);
+    let undo = invoke(editor_port, &[], r#"{"command":"undo"}"#);
+    assert!(undo.status.success());
+    let _reconnected = connect_updates(viewer_port, query);
+    let (_, latest) = get_json(viewer_port, &format!("/state{query}"));
+    assert_eq!(latest["result"]["revision"].as_u64().unwrap(), before + 2);
+}
+
 #[test]
 fn cli_imports_binary_fbx_and_persists_editable_geometry() {
     let mut source = gpt_mesh::Document::default();

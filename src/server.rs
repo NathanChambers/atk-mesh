@@ -3,10 +3,15 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
+use viewer_updates::{ViewerUpdates, WorkspaceUpdates};
 use workspace_host::WorkspaceHost;
 
+mod viewer_updates;
 mod workspace_host;
+
+const MAX_VIEWER_STREAMS: usize = 16;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
@@ -104,10 +109,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("Mesh editor API: {url}");
     }
+    let updates = Arc::new(ViewerUpdates::default());
     for connection in listener.incoming() {
         match connection {
             Ok(mut stream) => {
-                if let Err(error) = handle(&mut stream, &mut host) {
+                if let Err(error) = handle(&mut stream, &mut host, &updates) {
                     eprintln!("Request failed: {error}");
                 }
             }
@@ -120,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn handle(
     stream: &mut TcpStream,
     host: &mut WorkspaceHost,
+    updates: &Arc<ViewerUpdates>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
@@ -164,6 +171,29 @@ fn handle(
         *target = path;
         query = parameters;
     }
+    if let ["GET", "/api/events", _] = route.as_slice() {
+        match workspace_updates(host, query) {
+            Ok(source) if Arc::strong_count(updates) <= MAX_VIEWER_STREAMS => {
+                let stream = stream.try_clone()?;
+                let updates = Arc::clone(updates);
+                std::thread::Builder::new()
+                    .name("mesh-viewer-events".into())
+                    .spawn(move || {
+                        let _ = updates.serve(stream, source);
+                    })?;
+                return Ok(());
+            }
+            Ok(_) => {
+                write!(stream, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+                return Ok(());
+            }
+            Err(error) => {
+                write!(stream, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}", error.len())?;
+                return Ok(());
+            }
+        }
+    }
+
     let mut etag_header = String::new();
     let (status, content_type, output) = match route.as_slice() {
         ["GET", "/workspaces", _] => (200, "application/json", host.list().to_string()),
@@ -200,7 +230,7 @@ fn handle(
             }
         }
         [method, path, _] if is_workspace_route(method, path) => {
-            let response = workspace_route(host, path, query, &body);
+            let response = workspace_route(host, path, query, &body, updates);
             match response {
                 Ok((status, value)) => (status, "application/json", value.to_string()),
                 Err(error) => (
@@ -235,6 +265,19 @@ fn viewer_asset(path: &str) -> (u16, &'static str, String) {
     (200, content_type, content.into())
 }
 
+fn workspace_updates(host: &WorkspaceHost, query: &str) -> Result<WorkspaceUpdates, String> {
+    let workspace = parse_workspace_query(query)?;
+    match (host, workspace) {
+        (WorkspaceHost::Editor { .. }, None) => Ok(WorkspaceUpdates::Editor),
+        (WorkspaceHost::Viewer { root }, Some(workspace)) => Ok(WorkspaceUpdates::Saved {
+            root: root.clone(),
+            workspace,
+        }),
+        (WorkspaceHost::Editor { .. }, Some(_)) => Err("the editor port already identifies the mesh; omit the workspace query".into()),
+        (WorkspaceHost::Viewer { .. }, None) => Err("select a mesh workspace".into()),
+    }
+}
+
 fn is_workspace_route(method: &str, path: &str) -> bool {
     match method {
         "GET" => path == "/sessions" || path.starts_with("/sessions/"),
@@ -248,6 +291,7 @@ fn workspace_route(
     path: &str,
     query: &str,
     body: &[u8],
+    updates: &ViewerUpdates,
 ) -> Result<(u16, Value), String> {
     let workspace = parse_workspace_query(query)?;
     let workspace = workspace.as_deref();
@@ -255,10 +299,15 @@ fn workspace_route(
         let session = host.editor(workspace)?;
         let snapshots = path == "/command/debug";
         let request = serde_json::from_slice::<Value>(body).map_err(|error| error.to_string())?;
+        let previous_revision = session.revision();
         let output = match request {
             Value::Array(commands) => execute_batch(session, commands, snapshots),
             value => execute_command(session, value, snapshots),
         };
+        if session.revision() != previous_revision {
+            updates.publish();
+        }
+
         let status = if output["ok"] == true { 200 } else { 400 };
         return Ok((status, output));
     }

@@ -11,6 +11,10 @@ let savedStateTag = null;
 let timer = null;
 let stopped = false;
 let controller = null;
+let events = null;
+let eventsOpen = false;
+let nextEventAttempt = 0;
+let refreshPending = false;
 let graphicsError = null;
 let inspector = null;
 let workspace = null;
@@ -484,6 +488,7 @@ function openWorkspacePicker() {
     picker.showModal();
     renderWorkspaceMatches();
     nextDiscovery = 0;
+    if (typeof EventSource === 'function') { requestRefresh(); }
 }
 
 function selectWorkspace(path) {
@@ -498,11 +503,43 @@ function selectWorkspace(path) {
     window.location.assign(url);
 }
 
+function requestRefresh() {
+    clearTimeout(timer);
+    if (controller !== null) {
+        refreshPending = true;
+    } else {
+        refresh();
+    }
+}
+
+function connectUpdates() {
+    if (events !== null || typeof EventSource !== 'function' || Date.now() < nextEventAttempt) { return; }
+    if (workspaceMode === 'viewer' && workspaceTarget === null) { return; }
+
+    const query = workspaceMode === 'viewer' ? workspaceQuery : '';
+    const stream = new EventSource('/api/events' + query);
+    events = stream;
+    stream.addEventListener('open', () => {
+        eventsOpen = true;
+        requestRefresh();
+    });
+    stream.addEventListener('change', requestRefresh);
+    stream.addEventListener('error', () => {
+        eventsOpen = false;
+        if (stream.readyState === EventSource.CLOSED) {
+            events = null;
+            nextEventAttempt = Date.now() + 1000;
+        }
+        requestRefresh();
+    });
+}
+
 async function refresh() {
     if (stopped === true) { return; }
 
     controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    let retrySnapshot = false;
     try {
         const options = { signal: controller.signal, cache: 'no-store' };
         if (workspaceMode === null || (element('workspace-picker').open === true && Date.now() >= nextDiscovery)) {
@@ -511,6 +548,7 @@ async function refresh() {
         }
         if (stopped === true) { return; }
 
+        connectUpdates();
         if (workspaceMode === 'viewer' && workspaceTarget === null) {
             element('notice').textContent = graphicsError ?? 'Choose a workspace with the folder button or Ctrl+P.';
             element('notice').hidden = false;
@@ -519,7 +557,7 @@ async function refresh() {
         }
 
         const query = workspaceMode === 'viewer' ? workspaceQuery : '';
-        if (workspaceMode === 'viewer') {
+        if (workspaceMode === 'viewer' && eventsOpen === false) {
             const metadata = await readJson('/state/meta' + query, options);
             if (stopped === true) { return; }
             if (savedStateTag !== null && metadata.result.tag === savedStateTag) {
@@ -573,6 +611,7 @@ async function refresh() {
         setConnection(false);
         element('notice').hidden = false;
         if (error instanceof TypeError || error.name === 'AbortError') {
+            retrySnapshot = true;
             element('notice').textContent = geometryKey === null ? 'Waiting for the mesh server. Retrying automatically…' : 'Connection interrupted. Showing the last model; retrying automatically…';
         } else {
             element('notice').textContent = error.message;
@@ -581,7 +620,16 @@ async function refresh() {
     } finally {
         clearTimeout(timeout);
         controller = null;
-        if (stopped === false) { timer = setTimeout(refresh, document.hidden === true ? 2000 : 400); }
+        if (stopped === false) {
+            if (refreshPending === true) {
+                refreshPending = false;
+                timer = setTimeout(refresh, 0);
+            } else if (retrySnapshot === true || (eventsOpen === false && (workspaceMode !== 'viewer' || workspaceTarget !== null || typeof EventSource !== 'function'))) {
+                timer = setTimeout(refresh, document.hidden === true ? 2000 : 400);
+            } else if (element('workspace-picker').open === true) {
+                timer = setTimeout(refresh, 5000);
+            }
+        }
     }
 }
 
@@ -724,6 +772,7 @@ function initialize() {
         stopped = true;
         clearTimeout(timer);
         controller?.abort();
+        events?.close();
         inspector.dispose();
         viewer.dispose();
     });

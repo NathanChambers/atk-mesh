@@ -97,14 +97,7 @@ impl WorkspaceHost {
         let Self::Viewer { root } = self else {
             return Err("saved state metadata is available on the project viewer port".into());
         };
-        let workspace = resolve(root, workspace)?;
-        let metadata = fs::symlink_metadata(workspace.join("project.json"))
-            .map_err(|error| format!("cannot read saved mesh metadata: {error}"))?;
-        if !metadata.is_file() || is_link(&metadata) {
-            return Err("cannot read saved mesh metadata".into());
-        }
-
-        let tag = saved_state_tag(&workspace, &metadata);
+        let tag = saved_workspace_tag(root, workspace)?;
         Ok(json!({"ok":true,"result":{"tag":tag}}))
     }
 
@@ -132,6 +125,17 @@ impl WorkspaceHost {
             }
         }
     }
+}
+
+pub fn saved_workspace_tag(root: &Path, workspace: Option<&str>) -> Result<Option<String>, String> {
+    let workspace = resolve(root, workspace)?;
+    let metadata = fs::symlink_metadata(workspace.join("project.json"))
+        .map_err(|error| format!("cannot read saved mesh metadata: {error}"))?;
+    if !metadata.is_file() || is_link(&metadata) {
+        return Err("cannot read saved mesh metadata".into());
+    }
+
+    Ok(saved_state_tag(&workspace, &metadata))
 }
 
 fn saved_state_tag(workspace: &Path, metadata: &fs::Metadata) -> Option<String> {
