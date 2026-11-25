@@ -135,7 +135,28 @@ pub(super) fn assign(
     } else {
         points(&rings[0])
     };
-    let u = arc(&profile, wrap)?;
+    let contour_lengths = operation.get("uv_contour_lengths").map(|value| {
+        serde_json::from_value::<Vec<usize>>(value.clone())
+            .map_err(|_| "invalid generator UV contours")
+    }).transpose()?;
+    operation.as_object_mut().unwrap().remove("uv_contour_lengths");
+    let mut contours = Vec::new();
+    let u = if let Some(lengths) = contour_lengths {
+        let count = lengths.len() as f64;
+        let width = (layout.side_region[2] - layout.side_region[0]) / count;
+        let mut start = 0;
+        for (i, length) in lengths.into_iter().enumerate() {
+            let end = start + length;
+            let mut rect = layout.side_region;
+            rect[0] += i as f64 * width;
+            rect[2] = rect[0] + width;
+            contours.push((start..end, arc(&profile[start..end], true)?, inset(rect, layout.padding)?));
+            start = end;
+        }
+        Vec::new()
+    } else {
+        arc(&profile, wrap)?
+    };
     let mut v = vec![];
     if !revolved {
         let centers: Vec<_> = rings
@@ -192,10 +213,12 @@ pub(super) fn assign(
             .iter()
             .map(|(i, j)| if revolved { *i } else { *j })
             .collect();
-        let seam = wrap && indices.contains(&0) && indices.contains(&(u.len() - 1));
+        let (start, face_u, side) = contours.iter().find(|(range, _, _)| range.contains(&indices[0]))
+            .map_or((0, u.as_slice(), side), |(range, u, rect)| (range.start, u.as_slice(), *rect));
+        let seam = wrap && indices.contains(&start) && indices.contains(&(start + face_u.len() - 1));
         let mut mapped = BTreeMap::new();
         for ((id, (ring, column)), index) in vertices.iter().zip(corners).zip(indices) {
-            let longitude = if seam && index == 0 { 1.0 } else { u[index] };
+            let longitude = if seam && index == start { 1.0 } else { face_u[index - start] };
             let latitude = if revolved {
                 let segment = ordinal % segments;
                 let position = if rings[ring].len() == 1 {

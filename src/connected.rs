@@ -15,7 +15,7 @@ pub(super) fn loft(mesh: &mut Mesh, request: &Value, strip: bool) -> Result<Valu
                 .map_err(|_| "loops must be ordered arrays of existing vertex IDs")
         })
         .transpose()?;
-    let contours: Vec<Vec<[f64; 3]>> = if let Some(loops) = &existing {
+    let mut contours: Vec<Vec<[f64; 3]>> = if let Some(loops) = &existing {
         let object = crate::surface_ops::object(mesh, request)?;
         let mut seen = BTreeSet::new();
         let mut contours = vec![];
@@ -51,6 +51,39 @@ pub(super) fn loft(mesh: &mut Mesh, request: &Value, strip: bool) -> Result<Valu
     }
     if strip && contours.len() != 2 {
         return Err("quad_strip requires exactly two paired contours".into());
+    }
+    if let Some(interpolation) = request.get("interpolation") {
+        if strip || existing.is_some() || contours.len() != 2 {
+            return Err("loft interpolation requires exactly two explicit contours".into());
+        }
+        let segments = interpolation["segments"]
+            .as_u64()
+            .filter(|segments| (1..=255).contains(segments))
+            .ok_or("loft interpolation segments must be 1..255")? as usize;
+        if (segments + 1) * count > 150000 {
+            return Err("loft interpolation exceeds the 150000 vertex budget".into());
+        }
+        let smooth = match interpolation["type"].as_str() {
+            Some("linear") => false,
+            Some("smoothstep") => true,
+            _ => return Err("loft interpolation type must be linear or smoothstep".into()),
+        };
+        let end = contours.pop().unwrap();
+        let start = contours.pop().unwrap();
+        contours.push(start);
+        for i in 1..segments {
+            let mut t = i as f64 / segments as f64;
+            if smooth {
+                t = t * t * (3.0 - 2.0 * t);
+            }
+            let section = contours[0]
+                .iter()
+                .zip(&end)
+                .map(|(a, b)| std::array::from_fn(|axis| a[axis] * (1.0 - t) + b[axis] * t))
+                .collect();
+            contours.push(section);
+        }
+        contours.push(end);
     }
     let cap_start = request.get("cap_start").map_or(Ok(false), |v| {
         v.as_bool().ok_or("cap_start must be boolean")

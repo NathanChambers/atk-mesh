@@ -60,7 +60,14 @@ A native workspace can store a bone hierarchy, per-vertex skin weights, and name
 - Supply an optional `tail:[x,y,z]` on a bone to set its display endpoint in world-space rest coordinates. Update an existing rig with `{"command":"rig_display_tails_set","tails":{"arm":[1,1.4,0]}}`. Use null to clear a tail. Tails affect the viewer overlay only.
 - Use `{"command":"rig_rotation_limits_set","limits":{"wrist":{"axis":[0,-1,0],"max_swing":55,"twist":[-25,25]}}}` to set local joint limits. The nonzero axis is expressed in the bone's rest axes. Swing limits the tilt away from that axis. Twist is a signed range around it and must include zero. All angles are in degrees. For a hinge, set `max_swing` to zero and use the hinge axis for twist. Use null to clear a limit. Limits apply after clip interpolation in the viewer and pose captures. GLB export bakes constrained motion at 60 Hz, with step tracks kept as step tracks. Authored keys stay editable.
 - `skin_weights_set` updates the supplied vertex IDs. Use one to four unique positive influences summing to one, or an empty list to clear that vertex. Unweighted vertices display at rest. Deleted vertices lose their bindings, and new vertices need weights.
+- To assign a two-bone blend, use `{"command":"skin_weights_set","object":2,"ramp":{"bones":["upper","lower"],"start":[0,1,0],"end":[0,2,0],"easing":"smoothstep"}}`. Scope it with `object`, a `vertices` list, or the current vertex selection. The command projects rest positions onto the start-to-end axis, clamps both ends to full weight on the corresponding bone, and replaces weights in scope. Choose `linear` or `smoothstep`.
+- To bind a rigid part, use `{"command":"skin_weights_set","object":2,"bone":"upper"}`. Every current vertex of the object gets weight 1 on that bone, replacing its previous influences. The command also works on linked instances, with independent weights on each object.
 - `animation_set` creates or replaces a named clip. Key times are seconds in strict ascending order. Translation offsets and XYZ rotations (degrees, applied X then Y then Z) are parent-relative. Translation interpolates linearly and rotation follows the shortest quaternion path. Tracks hold their endpoint poses outside the keyed interval. Match the start and end poses for a seamless loop. `animation_remove` deletes a named clip.
+- A top-level `shared_curve` in `animation_set` expands scalar `keys:[[seconds,value],...]` into regular bone tracks. For each bone in `channels`, optional `rotation` and `translation` vectors specify the local offsets at value 1. Negative values and overshoot are allowed. Explicit `clip.tracks` can coexist on other bones. The generated tracks are saved as ordinary editable keyframes.
+
+```json
+{"command":"animation_set","name":"Close","clip":{"duration":1},"shared_curve":{"keys":[[0,0],[0.7,1.1],[1,1]],"channels":{"left":{"rotation":[0,0,20]},"right":{"rotation":[0,0,-20]},"slider":{"translation":[0.2,0,0]}}}}
+```
 - `query_rig` lists bones, weighted vertex count and clips. Add `response:"full"` to read all authored data. Changes are undoable and saved with the workspace.
 - `query_animation` pages through clip summaries with duration in seconds, looping, and track count. Add `clip:"Idle"` to list tracks, key counts and first/last key times. Add `bone:"Chest"` to page through that track's exact keys. Use `limit` (1–256), `offset`, and the returned `next_offset`. Pass the returned `revision` on successive pages or edits to reject stale reads and writes.
 - Use `animation_update` with the clip `name` and `duration` or `looping` to edit metadata. Duration changes preserve key times and must contain all existing keys. Use `animation_track_set` with `name`, `bone`, and `keys` to add or replace a single track. Use `animation_track_remove` with `name` and `bone` to remove a track. Each clip needs at least one track.
@@ -386,8 +393,8 @@ To recover an exact array or object from a previous compact reply, send `query_r
 | `object_review_check` | `object`, `check`, `outcome`, `reason`, optional `evidence` | Record a review result against the object’s checklist |
 | `query_object_review` | `object` | Read the checklist, recorded outcomes and stage |
 | `object_set_origin` | `object`, `origin: [x,y,z]` | Set pivot without moving vertices |
-| `object_move` | `object`, `value: [x,y,z]` | Translate the object's vertices and origin together |
-| `object_rotate` | `object`, `value: [x,y,z]` | Rotate all object vertices around its origin; incremental degrees, X then Y then Z |
+| `object_move` | `object`, `value: [x,y,z]` or `align` | Translate the object's vertices and origin together |
+| `object_rotate` | `object`, `value: [x,y,z]`, optional `pivot:[x,y,z]` or `pivot:"bounds_center"` | Rotate all object vertices in incremental degrees, X then Y then Z. Defaults to its origin. A temporary pivot leaves the authored origin in place. |
 | `select_object` | `object` | Select all vertices owned by this object |
 | `object_instance` | Master `object`, unique `name`, optional translation `value:[x,y,z]` | Create a linked copy; master shape, topology and shading edits propagate |
 | `object_make_unique` | `object` | Detach a copy, preserving its placement, pivot, geometry IDs and collections |
@@ -395,14 +402,14 @@ To recover an exact array or object from a previous compact reply, send `query_r
 | `object_duplicate` | Source `object`, unique destination `name`, optional translation `value:[x,y,z]`. Independent copy preserving face winding, smoothing and flat-face overrides; translates the source pivot with the geometry. Returns new object and vertex/face remaps. Copies do not share later edits. |
 | `capture` | `yaw`, `pitch` in degrees; `zoom` at reference resolution; optional `width`, `height`, `mode`, `clean`, `depth_range`, `response:"full"` | Default: `artifacts.png` and `artifacts.svg`, view ID, revision and render metadata; full: `png_base64` and SVG wrapper. Defaults to 800×600 |
 | `select` | `vertices: [1,2]` | Replace vertex selection |
-| `select_box` | `min: [x,y,z]`, `max: [x,y,z]` | Inclusive spatial selection |
+| `select_box` | `min: [x,y,z]`, `max: [x,y,z]`, optional `mode` | Inclusive spatial selection. Use `replace` (default), `add`, `subtract`, or `intersect` to combine the box matches with the current selection. |
 | `select_image` | `view_id`, `rect: [left,top,right,bottom]`, optional `through` | Select vertices using capture pixel coordinates; defaults to visible only |
 | `move` | `value: [x,y,z]` | Translate selected vertices |
 | `move_vertices` | `object`, `offsets:[{vertex,delta:[x,y,z]},...]` | Apply distinct vertex offsets in one edit. See `local-sculpting` |
 | `sculpt_stroke` | `object`, `mode`, `radius`, `strength`, `samples:[{face,barycentric},...]`, optional `max_displacement`, `direction:[x,y,z]`, `continuous:true` | Raise or lower a connected neighborhood on a triangulated surface. See `local-sculpting` |
 | `scale` | `value: [x,y,z]` | Scale about selection center |
 | `rotate` | `value: [x,y,z]` | Rotate about selection center, degrees, X then Y then Z |
-| `extrude` | `face`, `value: [x,y,z]` | Replace face with displaced cap and side quads; select new vertices |
+| `extrude` | `face` or `faces:[ids]`, plus `value: [x,y,z]` or signed nonzero `distance` | Displace the cap and select its new vertices. Distance follows the unit normal implied by the face winding. A face list extrudes an edge-connected planar patch on one object, adding side walls only on its perimeter. |
 | `weld` | optional `vertices`, `target`, `position: [x,y,z]` | Merge vertices, repair face loops and remove collapsed faces; select survivor |
 | `split_edge` | `edge: [a,b]`, optional `fraction` (default 0.5) | Insert a vertex into every face sharing the edge; select new vertex |
 | `split_vertices` | `faces: [id,...]`, optional `vertices` | Duplicate shared vertices for these faces, separating them from other faces |
@@ -478,7 +485,33 @@ These limits are per command, not persistent constraints: successive passes can 
 
 `bevel_vertex` handles a point with three or more incident edges, such as the obelisk apex. It derives a cut-plane normal from the sum of normalized outgoing edge directions. The plane distance is `fraction` of the smallest positive edge projection onto that normal. This keeps the cut inside every incident edge and the cap planar even with unequal edge lengths. The incident faces must be convex and planar, all edges must cross that plane, and the resulting cap must be convex; open fans and unsupported concave/flat corners are rejected. The new cap vertices become selected. This is a single-segment vertex bevel, not a general edge bevel modifier.
 
-`inset` is a true edge-distance offset with mitered corners, not scaling around a centroid. It currently applies to one convex planar face. Excessive distances that collapse or invert the inset are rejected. The inner face keeps the original ID and can be extruded immediately.
+`inset` offsets the edges inward with mitered corners on a convex planar face. Excessive distances that collapse or invert the inset are rejected. The inner face keeps the original ID. Add a signed nonzero `depth` to extrude the inset cap in the same edit. Positive depth follows the face normal and negative depth recesses it.
+
+```json
+{"command":"inset","face":12,"distance":0.08,"depth":-0.04}
+```
+
+To extrude a planar patch, pass its face IDs in `faces`. This preserves the cap face IDs, adds walls along the perimeter, and returns `cap_faces`, `wall_faces`, and `vertex_remap`. The displacement must have a nonzero component along the patch normal.
+
+```json
+{"command":"extrude","object":2,"faces":[12,13],"distance":0.12}
+```
+
+Use `thicken` to duplicate an open sheet, orient the two layers outward, and close all boundary loops with walls. Supply `object` or `faces:[ids]` and positive `thickness`. A face list must form one edge-connected sheet detached from the unselected faces. Planar sheets default to the face normal. For a bent sheet, supply `direction:[x,y,z]`, a common offset direction pointing through the front of every face. The command normalizes this vector. Thicken returns the new cap and wall IDs and a vertex remap. The layer spacing is measured along that shared direction.
+
+```json
+{"command":"thicken","object":2,"thickness":0.06,"direction":[0,1,0]}
+```
+
+These operations validate topology and do not check global self-intersection. Region extrusion and thickening copy cap appearance from the source faces. New walls have no automatic UV unwrap.
+
+For bounds-based placement, this command puts object 2's bottom 0.02 units above object 1's top:
+
+```json
+{"command":"object_move","object":2,"align":{"target":1,"axis":"Y","from":"min","to":"max","offset":0.02}}
+```
+
+`from` and `to` each accept `min`, `center`, or `max` on the requested world axis. The optional signed offset is added to the target coordinate. Only the chosen axis moves. Alignment uses a single source object and a distinct target object.
 
 `bridge_faces` joins two capped ends, either on different components or on one mesh to form a handle/opening. The faces must be convex, planar, vertex-disjoint, have equal vertex counts and face the gap between their centroids. Each cap edge must already have one neighboring face. The second loop is traversed in reverse to preserve winding. By default, the command considers cyclic offsets and chooses the valid correspondence with the shortest total squared connector length. Supply `offset` (an integer from zero to the loop size minus one) to choose which vertex of the second face matches the first vertex of the first face. The command returns that offset, `vertex_pairs`, `removed_faces` and `created_faces`; all end vertices are selected and no vertices are created or moved. Side quads must be planar, convex and nondegenerate. Unequal loops, warped or twisted side quads and invalid topology are rejected atomically. This is a straight bridge; there are no intermediate segments or global self-intersection checks. Subdivide unequal loops first or shape additional sections with extrusion before joining them.
 
@@ -525,12 +558,39 @@ Choose capture detail with `width` and `height`, for example `{"command":"captur
 | `bisect_plane` | `object`, `normal`, `offset` or `offsets:[...]` (up to 32): split convex planar faces at `dot(unit(normal),position)=offset`, retaining both sides. Intersection vertices are shared; the last cut is selected. Returns cut vertices and face mappings. Optional `snap_tolerance` (0–0.001 world units, default zero) projects near-plane vertices and reports their IDs. Exact cuts do not move existing vertices. |
 | `radial_offset` | `axis`, optional `center`, `distance`: change selected vertices' distance from an axis, preserving axial positions; crossing the axis is rejected. |
 | `radial_profile` | `axis`, optional `center`, `profile:[[axial_position,radial_offset],...]`: linearly interpolated radial displacement on the current selection. Samples must increase in axial position relative to `center`; outside their span geometry is unchanged. Add support loops first for narrow features. |
-| `extrude_polygon` | `name` (or destination `object`), `points:[[u,v],...]`, positive `depth`, optional `axis`, `center`, `origin`, `bevel`, `bevel_segments` (1–16, default 3). Require `0 <= bevel < depth/2` (strict upper bound; default 0); `depth:0.065, bevel:0.02` is within the depth limit, while `bevel:0.035` is rejected. `center` offsets the outline's starting plane; extrusion extends from that plane by positive `depth` along `axis`, rather than centering thickness on it. Extrudes simple outlines, including concave outlines, with triangulated caps and optional multi-segment front/back edge rolls. Outline clearance can impose tighter bevel limits: collapsing or intersecting offsets are rejected. Holes are not supported. |
+| `extrude_polygon` | `name` (or destination `object`), `points:[[u,v],...]`, positive `depth`, optional `axis`, `center`, `origin`, `bevel`, `bevel_segments` (1–16, default 3), `holes`. Require `0 <= bevel < depth/2` (strict upper bound; default 0). `center` offsets the outline's starting plane. Extrusion extends from that plane by positive `depth` along `axis`. Caps are triangulated, and concave outlines are supported. Nonempty `holes` require a closed profile with bevel 0. |
 | `shade_smooth` | `object`, `angle` (0–180 degrees, default 60): crease-controlled, angle-weighted corner normals in CPU captures, WebGL and native FBX. Zero restores flat normals. Geometry and IDs are unchanged; the setting is saved on the object. |
 | `inspect_shading` | `face`, `faces`, or `object`; optional `coplanar:true` grows one seed face across connected, consistently oriented coplanar neighbors. Reports per-face planarity, shading-normal deviation and triangle quality, with offending face/vertex IDs. Read-only; defaults to the worst 16 issues, `limit:0..256`, `normal_threshold` in degrees (default 1), `quality_threshold:0..1` (default 0.1). |
 | `shade_region` | Same region selection; `mode:"flat"` overrides selected face corners with geometric normals, `mode:"smooth"` removes that override and resumes object shading. Other faces retain their existing shading. Positions, topology and origins are unchanged. |
 | `retriangulate_region` | Same region selection; requires one consistently wound planar patch with one simple boundary. Triangulates polygons and flips internal diagonals when the minimum quality of the two affected triangles improves. Preserves every existing vertex and the boundary. Up to 64 improvement passes; not a globally optimal remesher. |
 | `inset_region` | Same region selection plus positive `distance`: adds a coplanar support ring inside a triangulated or concave cap. Preserves all existing positions and the outer boundary. Currently requires one simple boundary and no interior vertices. Collapsing, crossing or invalid offsets reject atomically; reduce the distance for tight corners. |
+
+Use `"profile":{"ellipse":{"radii":[0.13,0.088],"sides":12}}` for a centered sweep cross-section sampled in local U/V coordinates. Radii must be positive and sides must be 3–64.
+
+Sweep paths can also be generated from compact descriptors:
+
+| Descriptor inside `path` | Sampling |
+| --- | --- |
+| `"line":{"start":[0,0,0],"end":[0,3,0],"segments":24}` | Straight line with evenly spaced rings. |
+| `"bezier":{"start":[0,0,0],"controls":[[0,1,0],[0.2,2,0]],"end":[0.6,3,0],"segments":24}` | Uniform parameter steps. Use one control point for a quadratic or two for a cubic. |
+| `"spline":{"points":[[0,0,0],[0.3,1,0],[-0.3,2,0],[0,3,0]],"segments_per_span":8}` | Uniform Catmull–Rom spline through every waypoint, with the same sample count per span. |
+
+Generated paths include both endpoints and support up to 4096 segments in total.
+Use `scale_keys:[[t,u,v],...]` in place of `scales` with any sweep path. Keys use strictly increasing normalized ring indices from 0 to 1 and positive scale factors. Scales interpolate linearly between keys and hold the nearest key outside that interval. For example, `[[0,1.55,1.55],[0.15,1,1],[1,0.45,0.45]]` creates a flared base and a tapered tip.
+
+`radial_profile` also accepts a function in the `profile` field:
+
+```json
+{"command":"radial_profile","axis":"Y","profile":{"taper":{"range":[0,3],"offsets":[0.25,-0.1],"ridge":{"amplitude":0.06,"cycles":8}}}}
+```
+
+Offsets are additive in mesh units and interpolate linearly over the axial range relative to `center`. The optional ridge adds a raised cosine that starts and ends at zero in each cycle. Amplitude must be nonnegative and cycles must be an integer from 1 to 4096. The function moves selected vertices within the range. Add enough rings to resolve each ridge before applying it.
+
+For openings, supply each inner contour in `holes`. Each hole must be strictly inside the outer contour. Touching, overlapping, and nested holes are rejected. Either winding is accepted, with up to 32 holes and 1,024 total profile points. The caps leave the openings clear, and each hole receives its own inner walls. An optional generator UV layout gives each contour a separate strip within the side region.
+
+```json
+{"command":"extrude_polygon","name":"Window wall","axis":"Z","depth":0.24,"points":[[0,0],[3,0],[3,2.4],[0,2.4]],"holes":[[[0.9,0.8],[2.1,0.8],[2.1,1.75],[0.9,1.75]]]}
+```
 
 A small rectangular panel example uses a bevel of 0.02, below half its 0.065 depth (0.0325):
 
@@ -753,6 +813,8 @@ Authored component records are named face regions, not a promise of one connecte
 | `quad_strip` | Same paired inputs as loft, exactly two contours, `closed:false` by default. Useful for an inner wheel-opening contour and its outer arch contour. Existing-ID loops reuse vertices rather than overlapping a new shell. |
 | `sweep` | Existing profile/path inputs plus `side_faces:"triangles"` (default) or `"quads"`, and `cap_start`/`cap_end` (default true). Quad output rejects warped or nonconvex sides; choose triangles or additional sections deliberately. |
 | `bevel_edges` | `object`, `edges:[[a,b],...]`, positive `width`, `segments:1..32`. Use `corner_mode:"isolated"` for vertex-disjoint convex manifold edges with three incident faces at each endpoint. Use `corner_mode:"rim"` for the complete perimeter of one convex planar cap with perpendicular side edges. The shared corner rings keep the rim watertight. A single segment makes a chamfer. |
+
+With two explicit `contours`, `loft` accepts `"interpolation":{"type":"linear","segments":8}` to generate nine sections including the endpoints. Set `type` to `smoothstep` to concentrate sections near the endpoints. Both modes interpolate corresponding XYZ coordinates and produce the same overall shape with different ring spacing. Segments must be 1–255 and the output is limited to 150,000 vertices.
 
 Loft/strip correspondence is the caller's contour order; it never guesses an offset or reverses individual contours. Quads must be planar, convex and nondegenerate. Existing-loop winding must match adjacent surfaces. Bevel strips and other new faces have no automatic UV unwrap or texture assignment; review affected UVs after topology edits. These commands do not perform solid unions or global intersection repair.
 
@@ -1122,6 +1184,8 @@ Read `instancing_review` in `workflow_status` at the start of blockout. Identify
 ```
 
 Use IDs returned by your model. Object queries report `master_object` and `instance_count`; the viewer labels each relationship. `query_instance` maps picked instance vertices/faces back to master IDs without dumping a complete mesh. After detaching, edit the object normally or create a new family of instances from it.
+
+For evenly spaced copies, use `{"command":"object_instance","object":1,"name":"Vent","array":{"count":4,"step":[0.13,0,0]}}`. This creates four new linked instances named `Vent 1` through `Vent 4`, at one through four steps from the master. The step is a nonzero world-space vector. The array accepts 1–256 copies and at most 150,000 new vertices. The operation returns their IDs in placement order and undoes as a single edit.
 
 Master vertex, topology and shading edits propagate in the same undoable transaction. Surviving source IDs retain their instance mappings; new topology receives new IDs, and deleted topology is removed from every linked copy. Each instance has its own name, pivot, collections and placement. Use `object_move`, `object_rotate` and `object_set_origin` for placement; these commands also work on a master without moving its followers. Collection transforms apply once to each member. Selection-based shape edits on instances are rejected with instructions to edit the master or make unique. Instance-specific scaling and nested instance chains are not supported yet. Create additional copies from the reported master.
 

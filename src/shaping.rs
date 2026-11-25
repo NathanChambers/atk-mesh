@@ -112,7 +112,15 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             let axis = axis(request)?;
             let center = center(request)?;
             let distance = number(request, "distance", 0.0)?;
-            let samples: Vec<[f64; 2]> = if command == "radial_profile" {
+            let function = if command == "radial_profile" {
+                request["profile"]
+                    .get("taper")
+                    .map(RadialTaper::parse)
+                    .transpose()?
+            } else {
+                None
+            };
+            let samples: Vec<[f64; 2]> = if command == "radial_profile" && function.is_none() {
                 let samples: Vec<[f64; 2]> = serde_json::from_value(request["profile"].clone())
                     .map_err(|_| "profile must contain [axial_position,radial_offset] samples")?;
                 if samples.len() < 2
@@ -134,10 +142,12 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             let mut changed = vec![];
             for id in &mesh.selection {
                 let point = mesh.vertices.get_mut(id).unwrap();
-                let distance = if samples.is_empty() {
+                let coordinate = point[axis] - center[axis];
+                let distance = if let Some(function) = &function {
+                    function.offset(coordinate)
+                } else if samples.is_empty() {
                     distance
                 } else {
-                    let coordinate = point[axis] - center[axis];
                     samples
                         .windows(2)
                         .find(|pair| {
@@ -164,10 +174,10 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                 }
                 changed.push(*id);
             }
-            if samples.is_empty() {
-                json!({"changed_vertices":changed,"distance":distance})
+            if command == "radial_profile" {
+                json!({"changed_vertices":changed,"profile":if function.is_some() { request["profile"].clone() } else { json!(samples) }})
             } else {
-                json!({"changed_vertices":changed,"profile":samples})
+                json!({"changed_vertices":changed,"distance":distance})
             }
         }
         "shade_smooth" => {
@@ -186,6 +196,63 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
     };
     topology::validate_topology(mesh)?;
     Ok(result)
+}
+
+struct RadialTaper {
+    start: f64,
+    span: f64,
+    offsets: [f64; 2],
+    amplitude: f64,
+    cycles: u64,
+}
+
+impl RadialTaper {
+    fn parse(spec: &Value) -> Result<Self, String> {
+        let [start, end]: [f64; 2] = serde_json::from_value(spec["range"].clone())
+            .map_err(|_| "taper range must contain two axial positions")?;
+        let span = end - start;
+        if !span.is_finite() || span <= 0.0 {
+            return Err("taper range must be finite and increasing".into());
+        }
+        let offsets: [f64; 2] = serde_json::from_value(spec["offsets"].clone())
+            .map_err(|_| "taper offsets must contain two radial offsets")?;
+        let mut amplitude = 0.0;
+        let mut cycles = 0;
+        if let Some(ridge) = spec.get("ridge") {
+            amplitude = ridge["amplitude"]
+                .as_f64()
+                .filter(|amplitude| amplitude.is_finite() && *amplitude >= 0.0)
+                .ok_or("ridge amplitude must be finite and nonnegative")?;
+            cycles = ridge["cycles"]
+                .as_u64()
+                .filter(|cycles| (1..=4096).contains(cycles))
+                .ok_or("ridge cycles must be 1..4096")?;
+        }
+        if offsets
+            .iter()
+            .any(|offset| !offset.is_finite() || !(offset + amplitude).is_finite())
+        {
+            return Err("taper offsets and peak offsets must be finite".into());
+        }
+        Ok(Self {
+            start,
+            span,
+            offsets,
+            amplitude,
+            cycles,
+        })
+    }
+
+    fn offset(&self, coordinate: f64) -> f64 {
+        let t = (coordinate - self.start) / self.span;
+        if !(0.0..=1.0).contains(&t) {
+            return 0.0;
+        }
+        let [from, to] = self.offsets;
+        let phase = (t * self.cycles as f64).fract();
+        let ridge = self.amplitude * (0.5 - 0.5 * (phase * std::f64::consts::TAU).cos());
+        from * (1.0 - t) + to * t + ridge
+    }
 }
 
 pub(super) fn inspect_loop(mesh: &Mesh, request: &Value) -> Result<Value, String> {
@@ -445,7 +512,9 @@ pub(super) fn polygon_triangles(points: &[[f64; 2]]) -> Result<Vec<[usize; 3]>, 
                     && points[k][axis].min(points[l][axis]) <= points[i][axis].max(points[j][axis])
             });
             if crosses && overlaps {
-                return Err(format!("polygon intersects itself at outline edges {i}–{j} and {k}–{l} (zero-based point indices)"));
+                return Err(format!(
+                    "polygon intersects itself at outline edges {i}–{j} and {k}–{l} (zero-based point indices)"
+                ));
             }
         }
     }
@@ -540,6 +609,16 @@ pub(super) fn extrude_polygon(mesh: &mut Mesh, request: &Value) -> Result<Value,
             .ok_or("bevel_segments must be from 1 to 16")? as usize,
         None => 3,
     };
+    if let Some(holes) = request.get("holes") {
+        let holes: Vec<Vec<[f64; 2]>> = serde_json::from_value(holes.clone())
+            .map_err(|_| "holes must be a list of [u,v] outlines")?;
+        if !holes.is_empty() {
+            if !closed || bevel != 0.0 {
+                return Err("polygon holes require a closed profile and bevel 0".into());
+            }
+            return extrude_with_holes(mesh, request, points, holes, depth, [cap_start, cap_end]);
+        }
+    }
     let mut stages = vec![];
     if bevel == 0.0 {
         stages.extend([(0.0, 0.0), (depth, 0.0)]);
@@ -590,7 +669,9 @@ pub(super) fn extrude_polygon(mesh: &mut Mesh, request: &Value) -> Result<Value,
                 })
                 .sum();
             if dot <= 0.0 {
-                return Err(format!("bevel collapses an outline edge between points {i} and {j} (zero-based) at offset {offset}; reduce bevel width"));
+                return Err(format!(
+                    "bevel collapses an outline edge between points {i} and {j} (zero-based) at offset {offset}; reduce bevel width"
+                ));
             }
         }
         polygon_triangles(&outline)?;
@@ -642,6 +723,172 @@ pub(super) fn extrude_polygon(mesh: &mut Mesh, request: &Value) -> Result<Value,
     let mut operation = json!({"object":object,"front_vertices":rings[last],"back_vertices":rings[0],"bevel":bevel,"bevel_segments":segments});
     if request.get("uv").is_some() {
         operation["rings"] = json!(rings);
+    }
+    Ok(operation)
+}
+
+fn outline_edges(points: &[[f64; 2]]) -> impl Iterator<Item = ([f64; 2], [f64; 2])> + '_ {
+    points
+        .iter()
+        .copied()
+        .zip(points.iter().copied().cycle().skip(1))
+}
+
+fn orient(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn outline_area(points: &[[f64; 2]]) -> f64 {
+    let origin = points[0];
+    outline_edges(points)
+        .map(|(a, b)| orient(origin, a, b))
+        .sum::<f64>()
+        * 0.5
+}
+
+fn outline_contains(outline: &[[f64; 2]], [x, y]: [f64; 2]) -> bool {
+    outline_edges(outline)
+        .filter(|&([ax, ay], [bx, by])| {
+            (ay > y) != (by > y) && x < ax + (bx - ax) * (y - ay) / (by - ay)
+        })
+        .count()
+        % 2
+        == 1
+}
+
+fn outlines_touch(first: &[[f64; 2]], second: &[[f64; 2]]) -> bool {
+    outline_edges(first).any(|(a, b)| {
+        outline_edges(second).any(|(c, d)| {
+            let overlapping_bounds = (0..2).all(|axis| {
+                a[axis].min(b[axis]) <= c[axis].max(d[axis])
+                    && c[axis].min(d[axis]) <= a[axis].max(b[axis])
+            });
+            overlapping_bounds
+                && orient(a, b, c) * orient(a, b, d) <= 0.0
+                && orient(c, d, a) * orient(c, d, b) <= 0.0
+        })
+    })
+}
+
+fn extrude_with_holes(
+    mesh: &mut Mesh,
+    request: &Value,
+    outer: Vec<[f64; 2]>,
+    holes: Vec<Vec<[f64; 2]>>,
+    depth: f64,
+    caps: [bool; 2],
+) -> Result<Value, String> {
+    let total = outer.len() + holes.iter().map(Vec::len).sum::<usize>();
+    if total > 1024 || holes.len() > 32 {
+        return Err("polygon holes support at most 32 holes and 1024 total points".into());
+    }
+    let mut contours = vec![outer];
+    for mut hole in holes {
+        polygon_triangles(&hole)?;
+        if !outline_contains(&contours[0], hole[0]) || outlines_touch(&contours[0], &hole) {
+            return Err("each hole must lie strictly inside the outer outline".into());
+        }
+        for other in &contours[1..] {
+            if outlines_touch(other, &hole)
+                || outline_contains(other, hole[0])
+                || outline_contains(&hole, other[0])
+            {
+                return Err("holes may not touch, overlap or contain one another".into());
+            }
+        }
+        if outline_area(&hole) > 0.0 {
+            hole.reverse();
+        }
+        contours.push(hole);
+    }
+    let points: Vec<_> = contours.iter().flatten().copied().collect();
+    let mut triangles = Vec::new();
+    if caps.into_iter().any(|cap| cap) {
+        let polygons = contours
+            .iter()
+            .map(|contour| {
+                contour
+                    .iter()
+                    .map(|&[x, y]| manifold_rust::linalg::Vec2::new(x, y))
+                    .collect()
+            })
+            .collect();
+        let raw = manifold_rust::polygon::triangulate(&polygons, 0.0, false);
+        let expected_area = contours
+            .iter()
+            .map(|contour| outline_area(contour))
+            .sum::<f64>();
+        let mut area = 0.0;
+        for triangle in raw {
+            let indices = [
+                triangle.x as usize,
+                triangle.y as usize,
+                triangle.z as usize,
+            ];
+            if indices.iter().any(|&index| index >= points.len()) {
+                return Err("polygon cap tessellation produced an invalid vertex".into());
+            }
+            let [a, b, c] = indices.map(|index| points[index]);
+            let triangle_area = orient(a, b, c) * 0.5;
+            if !triangle_area.is_finite() || triangle_area <= 0.0 {
+                return Err(
+                    "polygon cap tessellation produced a degenerate or reversed triangle".into(),
+                );
+            }
+            area += triangle_area;
+            triangles.push(indices);
+        }
+        if !expected_area.is_finite()
+            || (area - expected_area).abs() > expected_area * 1e-8
+            || triangles.len() != total + 2 * (contours.len() - 1) - 2
+        {
+            return Err("polygon caps could not be tessellated with the requested holes".into());
+        }
+    }
+    let axis = axis(request)?;
+    let center = center(request)?;
+    let object = objects::destination_object(mesh, request)?;
+    let mut rings = Vec::new();
+    for height in [0.0, depth] {
+        let mut ring = Vec::with_capacity(total);
+        for &[u, v] in &points {
+            let mut point = center;
+            point[axis] += height;
+            point[(axis + 1) % 3] += u;
+            point[(axis + 2) % 3] += v;
+            ring.push(mesh.add_vertex(point)?);
+        }
+        rings.push(ring);
+    }
+    for [a, b, c] in triangles {
+        if caps[0] {
+            mesh.add_face(vec![rings[0][c], rings[0][b], rings[0][a]])?;
+        }
+        if caps[1] {
+            mesh.add_face(vec![rings[1][a], rings[1][b], rings[1][c]])?;
+        }
+    }
+    let mut start = 0;
+    let lengths: Vec<_> = contours.iter().map(Vec::len).collect();
+    for &count in &lengths {
+        for index in 0..count {
+            let a = start + index;
+            let b = start + (index + 1) % count;
+            mesh.add_face(vec![rings[0][a], rings[0][b], rings[1][b], rings[1][a]])?;
+        }
+        start += count;
+    }
+    mesh.objects
+        .get_mut(&object)
+        .unwrap()
+        .vertices
+        .extend(rings.iter().flatten().copied());
+    mesh.selection = rings[1].iter().copied().collect();
+    let mut operation = json!({"object":object,"front_vertices":rings[1],"back_vertices":rings[0],
+        "bevel":0,"hole_count":contours.len()-1});
+    if request.get("uv").is_some() {
+        operation["rings"] = json!(rings);
+        operation["uv_contour_lengths"] = json!(lengths);
     }
     Ok(operation)
 }

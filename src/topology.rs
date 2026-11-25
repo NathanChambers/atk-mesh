@@ -21,6 +21,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
         "split_vertices" => split_vertices(mesh, request)?,
         "split_face" => split_face(mesh, request)?,
         "inset" => inset(mesh, request)?,
+        "extrude" | "thicken" => extend_patch(mesh, command, request)?,
         "bevel_vertex" => bevel_vertex(mesh, request)?,
         "bridge_faces" => bridge_faces(mesh, request)?,
         _ => return Err("unknown topology command".into()),
@@ -267,7 +268,257 @@ fn inset(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
     }
     mesh.faces.insert(id, cap.clone());
     mesh.selection = cap.iter().copied().collect();
+    if let Some(depth) = request.get("depth") {
+        let depth = signed_depth(depth, "inset depth")?;
+        let offset = normal.map(|component| component * depth);
+        let boundary = ordered_edges(&cap).collect::<Vec<_>>();
+        let patch = BTreeMap::from([(id, cap)]);
+        let top = offset_patch(mesh, &patch, &boundary, offset, false)?;
+        let created_vertices: Vec<_> = top.vertices.keys().chain(top.vertices.values()).collect();
+        created_faces.extend_from_slice(&top.walls);
+        return Ok(json!({
+            "command":"inset","face":id,"created_vertices":created_vertices,
+            "created_faces":created_faces,"wall_faces":top.walls
+        }));
+    }
     Ok(json!({"command":"inset", "face":id, "created_vertices":cap, "created_faces":created_faces}))
+}
+
+fn signed_depth(value: &Value, name: &str) -> Result<f64, String> {
+    value
+        .as_f64()
+        .filter(|depth| depth.is_finite() && *depth != 0.0)
+        .ok_or_else(|| format!("{name} must be finite and nonzero"))
+}
+
+fn ordered_edges(face: &[u64]) -> impl Iterator<Item = (u64, u64)> + '_ {
+    face.iter()
+        .copied()
+        .zip(face.iter().copied().cycle().skip(1))
+}
+
+fn extend_patch(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
+    let thickening = command == "thicken";
+    if request.get("face").is_some() {
+        return Err("use faces for a surface patch".into());
+    }
+    let selected = if let Some(faces) = request.get("faces") {
+        ids(faces)?
+    } else if thickening {
+        let object = request["object"]
+            .as_u64()
+            .and_then(|id| mesh.objects.get(&id))
+            .ok_or("thicken requires faces or an existing object")?;
+        mesh.faces
+            .iter()
+            .filter(|(_, face)| object.vertices.contains(&face[0]))
+            .map(|(&id, _)| id)
+            .collect()
+    } else {
+        return Err("faces are required".into());
+    };
+    let mut patch = BTreeMap::new();
+    for id in selected {
+        patch.insert(
+            id,
+            mesh.faces
+                .get(&id)
+                .ok_or("unknown face in surface patch")?
+                .clone(),
+        );
+    }
+    let first = patch.values().next().ok_or("surface patch is empty")?;
+    let owner = mesh
+        .objects
+        .iter()
+        .find(|(_, object)| object.vertices.contains(&first[0]))
+        .map(|(&id, object)| (id, object))
+        .ok_or("surface patch must belong to an object")?;
+    if patch
+        .values()
+        .flatten()
+        .any(|vertex| !owner.1.vertices.contains(vertex))
+    {
+        return Err("surface patch must belong to a single object".into());
+    }
+    let object_id = owner.0;
+    let boundary = patch_boundary(&patch)?;
+    let origin = mesh.vertices[&first[0]];
+    let normal = crate::normals::face(mesh, first);
+    let scale = patch
+        .values()
+        .flatten()
+        .map(|vertex| {
+            let delta = subtract(mesh.vertices[vertex], origin);
+            delta[0].hypot(delta[1]).hypot(delta[2])
+        })
+        .fold(0.0_f64, f64::max);
+    let explicit_direction = thickening && request.get("direction").is_some();
+    if !explicit_direction {
+        let off_plane = patch.values().flatten().any(|vertex| {
+            dot(subtract(mesh.vertices[vertex], origin), normal).abs() > scale * 1e-8
+        });
+        if normal == [0.0; 3] || off_plane {
+            return Err("surface patch must be planar unless thicken supplies a direction".into());
+        }
+    }
+    let offset = if thickening {
+        let thickness = signed_depth(&request["thickness"], "thickness")?;
+        if thickness < 0.0 {
+            return Err("thickness must be positive".into());
+        }
+        let direction = if explicit_direction {
+            normalize(vector(&request["direction"])?)?
+        } else {
+            normal
+        };
+        if patch
+            .values()
+            .any(|face| dot(crate::normals::face(mesh, face), direction) <= 1e-8)
+        {
+            return Err(
+                "thicken direction must point through the front of every selected face".into(),
+            );
+        }
+        let exterior: BTreeSet<_> = mesh
+            .faces
+            .iter()
+            .filter(|(id, _)| !patch.contains_key(id))
+            .flat_map(|(_, face)| ordered_edges(face).map(|(a, b)| (a.min(b), a.max(b))))
+            .collect();
+        if boundary
+            .iter()
+            .any(|&(a, b)| exterior.contains(&(a.min(b), a.max(b))))
+        {
+            return Err("thicken requires an open sheet detached from unselected faces".into());
+        }
+        direction.map(|component| component * thickness)
+    } else {
+        let offset = match (request.get("value"), request.get("distance")) {
+            (Some(value), None) => vector(value)?,
+            (None, Some(distance)) => {
+                let distance = signed_depth(distance, "extrude distance")?;
+                normal.map(|component| component * distance)
+            }
+            _ => return Err("extrude requires either value or distance".into()),
+        };
+        if dot(offset, normal) == 0.0 {
+            return Err("region extrusion must move the cap out of its original plane".into());
+        }
+        offset
+    };
+    let result = offset_patch(mesh, &patch, &boundary, offset, thickening)?;
+    mesh.objects
+        .get_mut(&object_id)
+        .unwrap()
+        .vertices
+        .extend(result.vertices.values().copied());
+    Ok(
+        json!({"object":object_id,"cap_faces":result.caps,"wall_faces":result.walls,
+        "vertex_remap":result.vertices}),
+    )
+}
+
+fn patch_boundary(patch: &BTreeMap<u64, Vec<u64>>) -> Result<Vec<(u64, u64)>, String> {
+    let mut edges = BTreeMap::new();
+    let mut neighbors = BTreeMap::<u64, Vec<u64>>::new();
+    for (&id, face) in patch {
+        for (a, b) in ordered_edges(face) {
+            let incident = edges.entry((a.min(b), a.max(b))).or_insert_with(Vec::new);
+            incident.push((id, a, b));
+        }
+    }
+    let mut boundary = Vec::new();
+    for incident in edges.values() {
+        match incident.as_slice() {
+            &[(_, a, b)] => boundary.push((a, b)),
+            &[(first, a, b), (second, c, d)] if a == d && b == c => {
+                neighbors.entry(first).or_default().push(second);
+                neighbors.entry(second).or_default().push(first);
+            }
+            _ => return Err("surface patch requires consistent manifold edges".into()),
+        }
+    }
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![*patch.first_key_value().unwrap().0];
+    while let Some(id) = pending.pop() {
+        if visited.insert(id)
+            && let Some(adjacent) = neighbors.get(&id)
+        {
+            pending.extend(adjacent);
+        }
+    }
+    if visited.len() != patch.len() || boundary.is_empty() {
+        return Err("surface patch must be edge-connected and have a boundary".into());
+    }
+    Ok(boundary)
+}
+
+struct OffsetPatch {
+    vertices: BTreeMap<u64, u64>,
+    caps: Vec<u64>,
+    walls: Vec<u64>,
+}
+
+fn offset_patch(
+    mesh: &mut Mesh,
+    patch: &BTreeMap<u64, Vec<u64>>,
+    boundary: &[(u64, u64)],
+    offset: [f64; 3],
+    keep_base: bool,
+) -> Result<OffsetPatch, String> {
+    let vertices: BTreeSet<_> = patch.values().flatten().copied().collect();
+    let mut remap = BTreeMap::new();
+    for vertex in vertices {
+        let point = crate::geometry::add(mesh.vertices[&vertex], offset);
+        let next = mesh.add_vertex(point)?;
+        if let Some(color) = mesh.vertex_colors.get(&vertex).copied() {
+            mesh.vertex_colors.insert(next, color);
+        }
+        if let Some(rig) = &mut mesh.rig
+            && let Some(weights) = rig.weights.get(&vertex).cloned()
+        {
+            rig.weights.insert(next, weights);
+        }
+        remap.insert(vertex, next);
+    }
+    let mut caps = Vec::new();
+    for (&id, face) in patch {
+        let cap: Vec<_> = face.iter().map(|vertex| remap[vertex]).collect();
+        let cap_id = if keep_base {
+            mesh.faces.get_mut(&id).unwrap().reverse();
+            let cap_id = mesh.add_face(cap)?;
+            if mesh.flat_faces.contains(&id) {
+                mesh.flat_faces.insert(cap_id);
+            }
+            cap_id
+        } else {
+            mesh.faces.insert(id, cap);
+            id
+        };
+        crate::uv::copy_face(mesh, id, cap_id, &remap);
+        caps.push(cap_id);
+    }
+    let mut walls = Vec::new();
+    for &(a, b) in boundary {
+        walls.push(mesh.add_face(vec![a, b, remap[&b], remap[&a]])?);
+    }
+    if !keep_base {
+        let used: BTreeSet<_> = mesh.faces.values().flatten().copied().collect();
+        for old in remap.keys().filter(|vertex| !used.contains(vertex)) {
+            mesh.vertices.remove(old);
+            mesh.vertex_colors.remove(old);
+            if let Some(rig) = &mut mesh.rig {
+                rig.weights.remove(old);
+            }
+        }
+    }
+    mesh.selection = remap.values().copied().collect();
+    Ok(OffsetPatch {
+        vertices: remap,
+        caps,
+        walls,
+    })
 }
 
 fn bevel_vertex(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {

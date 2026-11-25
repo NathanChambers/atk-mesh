@@ -25,8 +25,7 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
     let cap_end = request
         .get("cap_end")
         .map_or(Ok(true), |v| v.as_bool().ok_or("cap_end must be boolean"))?;
-    let mut profile: Vec<[f64; 2]> = serde_json::from_value(request["profile"].clone())
-        .map_err(|_| "profile must contain [u,v] points")?;
+    let mut profile = sweep_profile(&request["profile"])?;
     if profile.len() > 64 {
         return Err("sweep profile supports at most 64 points".into());
     }
@@ -41,6 +40,12 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         profile.reverse();
     }
     let mut radial = vec![];
+    if request["path"]
+        .as_object()
+        .is_some_and(|path| path.len() != 1)
+    {
+        return Err("path must specify exactly one sweep path descriptor".into());
+    }
     let path: Vec<[f64; 3]> = if let Some(helix) = request["path"].get("helix") {
         let radius: [f64; 2] = serde_json::from_value(helix["radius"].clone())
             .map_err(|_| "helix radius must contain two positive radii")?;
@@ -91,9 +96,20 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
             radial.push(normals::unit(outward));
         }
         points
+    } else if let Some(line) = request["path"].get("line") {
+        let start = vector(&line["start"])?;
+        let end = vector(&line["end"])?;
+        let segments = path_segments(&line["segments"], "segments", 4096)?;
+        (0..=segments)
+            .map(|i| lerp(start, end, i as f64 / segments as f64))
+            .collect()
+    } else if let Some(bezier) = request["path"].get("bezier") {
+        bezier_path(bezier)?
+    } else if let Some(spline) = request["path"].get("spline") {
+        spline_path(spline)?
     } else {
         serde_json::from_value(request["path"].clone())
-            .map_err(|_| "path must be 3D points or a helix descriptor")?
+            .map_err(|_| "path must be 3D points or a line, bezier, spline or helix descriptor")?
     };
     if path.len() < 2
         || path.len() > 4097
@@ -104,11 +120,13 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
             "sweep requires 2..4097 finite path points within the 150000 vertex budget".into(),
         );
     }
-    let scales: Vec<[f64; 2]> = request
-        .get("scales")
-        .map(|v| serde_json::from_value(v.clone()).map_err(|_| "scales must contain [u,v] factors"))
-        .transpose()?
-        .unwrap_or_else(|| vec![[1.0, 1.0]; path.len()]);
+    let scales: Vec<[f64; 2]> = match (request.get("scales"), request.get("scale_keys")) {
+        (Some(_), Some(_)) => return Err("use either scales or scale_keys".into()),
+        (Some(scales), None) => serde_json::from_value(scales.clone())
+            .map_err(|_| "scales must contain [u,v] factors")?,
+        (None, Some(keys)) => sample_scales(keys, path.len())?,
+        (None, None) => vec![[1.0, 1.0]; path.len()],
+    };
     if scales.len() != path.len() || scales.iter().flatten().any(|v| !v.is_finite() || *v <= 0.0) {
         return Err("scales must provide two finite positive factors per path point".into());
     }
@@ -217,4 +235,137 @@ pub(super) fn create(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         operation["uv_path"] = json!(path);
     }
     Ok(operation)
+}
+
+fn sweep_profile(value: &Value) -> Result<Vec<[f64; 2]>, String> {
+    let Some(ellipse) = value.get("ellipse") else {
+        return serde_json::from_value(value.clone())
+            .map_err(|_| "profile must contain [u,v] points or an ellipse descriptor".into());
+    };
+    let radii: [f64; 2] = serde_json::from_value(ellipse["radii"].clone())
+        .map_err(|_| "ellipse radii must contain two positive numbers")?;
+    if radii
+        .iter()
+        .any(|radius| !radius.is_finite() || *radius <= 0.0)
+    {
+        return Err("ellipse radii must be finite and positive".into());
+    }
+    let sides = ellipse["sides"]
+        .as_u64()
+        .filter(|sides| (3..=64).contains(sides))
+        .ok_or("ellipse sides must be 3..64")?;
+    Ok((0..sides)
+        .map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / sides as f64;
+            [radii[0] * angle.cos(), radii[1] * angle.sin()]
+        })
+        .collect())
+}
+
+fn lerp<const N: usize>(start: [f64; N], end: [f64; N], t: f64) -> [f64; N] {
+    std::array::from_fn(|i| start[i] * (1.0 - t) + end[i] * t)
+}
+
+fn path_segments(value: &Value, field: &str, max: usize) -> Result<usize, String> {
+    value
+        .as_u64()
+        .filter(|segments| (1..=max as u64).contains(segments))
+        .map(|segments| segments as usize)
+        .ok_or_else(|| format!("{field} must be 1..{max}"))
+}
+
+fn bezier_path(spec: &Value) -> Result<Vec<[f64; 3]>, String> {
+    let start = vector(&spec["start"])?;
+    let end = vector(&spec["end"])?;
+    let controls = spec["controls"]
+        .as_array()
+        .filter(|controls| (1..=2).contains(&controls.len()))
+        .ok_or("bezier controls must contain one or two 3D points")?;
+    let first = vector(&controls[0])?;
+    let second = controls.get(1).map(vector).transpose()?;
+    let segments = path_segments(&spec["segments"], "segments", 4096)?;
+
+    Ok((0..=segments)
+        .map(|i| {
+            let t = i as f64 / segments as f64;
+            let a = lerp(start, first, t);
+            if let Some(second) = second {
+                let b = lerp(first, second, t);
+                let c = lerp(second, end, t);
+                lerp(lerp(a, b, t), lerp(b, c, t), t)
+            } else {
+                lerp(a, lerp(first, end, t), t)
+            }
+        })
+        .collect())
+}
+
+fn spline_path(spec: &Value) -> Result<Vec<[f64; 3]>, String> {
+    let points = spec["points"]
+        .as_array()
+        .filter(|points| (2..=4097).contains(&points.len()))
+        .ok_or("spline points must contain 2..4097 waypoints")?;
+    let spans = points.len() - 1;
+    let segments = path_segments(
+        &spec["segments_per_span"],
+        "segments_per_span",
+        4096 / spans,
+    )?;
+    let points = points.iter().map(vector).collect::<Result<Vec<_>, _>>()?;
+    if points.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("spline waypoints must not repeat consecutively".into());
+    }
+
+    let mut path = Vec::with_capacity(spans * segments + 1);
+    for i in 0..spans {
+        let previous = points[i.saturating_sub(1)];
+        let start = points[i];
+        let end = points[i + 1];
+        let next = points[(i + 2).min(spans)];
+        path.push(start);
+        for j in 1..segments {
+            let t = j as f64 / segments as f64;
+            let t2 = t * t;
+            let t3 = t2 * t;
+            path.push(std::array::from_fn(|axis| {
+                let incoming = (end[axis] - previous[axis]) * 0.5;
+                let outgoing = (next[axis] - start[axis]) * 0.5;
+                (2.0 * t3 - 3.0 * t2 + 1.0) * start[axis]
+                    + (t3 - 2.0 * t2 + t) * incoming
+                    + (-2.0 * t3 + 3.0 * t2) * end[axis]
+                    + (t3 - t2) * outgoing
+            }));
+        }
+    }
+    path.push(points[spans]);
+    Ok(path)
+}
+
+fn sample_scales(value: &Value, ring_count: usize) -> Result<Vec<[f64; 2]>, String> {
+    let keys: Vec<[f64; 3]> = serde_json::from_value(value.clone())
+        .map_err(|_| "scale_keys must contain [t,u,v] entries")?;
+    let invalid_key = keys.iter().any(|[t, u, v]| {
+        !(0.0..=1.0).contains(t) || !u.is_finite() || !v.is_finite() || *u <= 0.0 || *v <= 0.0
+    });
+    if keys.is_empty() || invalid_key || keys.windows(2).any(|pair| pair[0][0] >= pair[1][0]) {
+        return Err("scale_keys require increasing t in 0..1 and finite positive factors".into());
+    }
+
+    let mut next = 1;
+    let mut scales = Vec::with_capacity(ring_count);
+    for i in 0..ring_count {
+        let t = i as f64 / (ring_count - 1) as f64;
+        while next < keys.len() && t > keys[next][0] {
+            next += 1;
+        }
+        let [start, u, v] = keys[next - 1];
+        let scale = match keys.get(next) {
+            Some(&[end, end_u, end_v]) if t > start => {
+                lerp([u, v], [end_u, end_v], (t - start) / (end - start))
+            }
+            _ => [u, v],
+        };
+        scales.push(scale);
+    }
+    Ok(scales)
 }

@@ -307,6 +307,52 @@ pub(super) fn check_scope(before: &Mesh, after: &Mesh, request: &Value) -> Resul
     Ok(())
 }
 
+pub(super) fn rotation_pivot(mesh: &Mesh, object: &MeshObject, pivot: &Value) -> Result<[f64; 3], String> {
+    if pivot.as_str() == Some("bounds_center") {
+        let [min, max] = crate::construction::bounds_points(mesh, &object.vertices)
+            .ok_or("bounds center requires a nonempty object")?;
+        return Ok(std::array::from_fn(|axis| min[axis] * 0.5 + max[axis] * 0.5));
+    }
+    vector(pivot)
+}
+
+fn bounds_anchor(bounds: [[f64; 3]; 2], axis: usize, anchor: &Value) -> Result<f64, String> {
+    let [min, max] = bounds;
+    match anchor.as_str() {
+        Some("min") => Ok(min[axis]),
+        Some("center") => Ok(min[axis] * 0.5 + max[axis] * 0.5),
+        Some("max") => Ok(max[axis]),
+        _ => Err("bounds anchor must be min, center or max".into()),
+    }
+}
+
+fn alignment_offset(mesh: &Mesh, id: u64, align: &Value) -> Result<[f64; 3], String> {
+    let target = align["target"].as_u64().filter(|target| *target != id)
+        .and_then(|target| mesh.objects.get(&target))
+        .ok_or("alignment target must be a different existing object")?;
+    let axis = match align["axis"].as_str() {
+        Some("X") => 0,
+        Some("Y") => 1,
+        Some("Z") => 2,
+        _ => return Err("alignment axis must be X, Y or Z".into()),
+    };
+    let source_bounds = crate::construction::bounds_points(mesh, &mesh.objects[&id].vertices)
+        .ok_or("alignment source has no bounds")?;
+    let target_bounds = crate::construction::bounds_points(mesh, &target.vertices)
+        .ok_or("alignment target has no bounds")?;
+    let from = bounds_anchor(source_bounds, axis, &align["from"])?;
+    let to = bounds_anchor(target_bounds, axis, &align["to"])?;
+    let offset = align.get("offset").map_or(Ok(0.0), |value| {
+        value.as_f64().filter(|value| value.is_finite()).ok_or("alignment offset must be finite")
+    })?;
+    let mut delta = [0.0; 3];
+    delta[axis] = to - from + offset;
+    if !delta[axis].is_finite() {
+        return Err("alignment translation must be finite".into());
+    }
+    Ok(delta)
+}
+
 pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
     if command == "object_create_box" || command == "object_add_box" {
         let min = vector(&request["min"])?;
@@ -354,6 +400,21 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
     }
     let id = request["object"].as_u64().ok_or("object is required")?;
     let object = mesh.objects.get(&id).ok_or("unknown object")?.clone();
+    let mut resolved;
+    let request = if command == "object_move" && request.get("align").is_some() {
+        if request.get("value").is_some() {
+            return Err("object_move requires either value or align".into());
+        }
+        resolved = request.clone();
+        resolved["value"] = json!(alignment_offset(mesh, id, &request["align"])?);
+        &resolved
+    } else if command == "object_rotate" && request.get("pivot").is_some() {
+        resolved = request.clone();
+        resolved["pivot"] = json!(rotation_pivot(mesh, &object, &request["pivot"])?);
+        &resolved
+    } else {
+        request
+    };
     crate::instances::placement(mesh, id, command, request)?;
     match command {
         "object_scale" => {
@@ -514,6 +575,8 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
         "select_object" => mesh.selection = object.vertices.clone(),
         "object_move" | "object_rotate" => {
             let value = vector(&request["value"])?;
+            let pivot = request.get("pivot").filter(|_| command == "object_rotate")
+                .map(vector).transpose()?.unwrap_or(object.origin);
             for vertex in &object.vertices {
                 let point = mesh.vertices.get_mut(vertex).unwrap();
                 if command == "object_move" {
@@ -522,7 +585,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                     }
                 } else {
                     let mut local: [f64; 3] =
-                        std::array::from_fn(|axis| point[axis] - object.origin[axis]);
+                        std::array::from_fn(|axis| point[axis] - pivot[axis]);
                     for (axis, angle) in value.iter().enumerate() {
                         let a = (axis + 1) % 3;
                         let b = (axis + 2) % 3;
@@ -532,7 +595,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
                         local[a] = first;
                     }
                     for axis in 0..3 {
-                        point[axis] = object.origin[axis] + local[axis];
+                        point[axis] = pivot[axis] + local[axis];
                     }
                 }
             }

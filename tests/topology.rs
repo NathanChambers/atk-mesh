@@ -200,6 +200,126 @@ fn split_face_adds_a_shared_diagonal_with_opposite_winding() {
 }
 
 #[test]
+fn distance_extrusion_matches_displacement_along_a_sloped_normal() {
+    let run = |argument: Value| {
+        let mut document = Document::default();
+        document.execute(json!({"command":"object_rotate","object":1,"value":[30,0,0]})).unwrap();
+        let mut request = json!({"command":"extrude","face":4});
+        request.as_object_mut().unwrap().extend(argument.as_object().unwrap().clone());
+        document.execute(request).unwrap()["mesh"].clone()
+    };
+    let angle = 30.0_f64.to_radians();
+    let distance = 0.25;
+    let a = run(json!({"distance":distance}));
+    let b = run(json!({"value":[0,distance * angle.cos(),distance * angle.sin()]}));
+    assert_eq!(a["faces"], b["faces"]);
+    for (id, point) in a["vertices"].as_object().unwrap() {
+        for axis in 0..3 {
+            let difference = point[axis].as_f64().unwrap() - b["vertices"][id][axis].as_f64().unwrap();
+            assert!(difference.abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn region_extrusion_preserves_cap_ids_and_walls_only_the_perimeter() {
+    let mut document = Document::default();
+    let split = document
+        .execute(json!({"command":"split_face","face":4,"vertices":[4,7]}))
+        .unwrap();
+    let other = split["operation"]["created_faces"][0].as_u64().unwrap();
+    assert_rejected(
+        &mut document,
+        json!({"command":"extrude","faces":[4,6],"distance":0.2}),
+    );
+    let result = document
+        .execute(json!({
+            "command":"extrude","faces":[4,other],"object":1,"distance":0.25
+        }))
+        .unwrap();
+    assert_closed(&result);
+    assert_eq!(result["operation"]["cap_faces"], json!([4, other]));
+    assert_eq!(
+        result["operation"]["wall_faces"].as_array().unwrap().len(),
+        4
+    );
+    for vertex in result["mesh"]["selection"].as_array().unwrap() {
+        assert_eq!(
+            result["mesh"]["vertices"][vertex.as_u64().unwrap().to_string()][1],
+            1.25
+        );
+    }
+}
+
+#[test]
+fn inset_depth_matches_inset_then_normal_extrusion() {
+    for depth in [-0.25, 0.25] {
+        let mut automatic = Document::default();
+        let combined = automatic
+            .execute(json!({
+                "command":"inset","face":4,"distance":0.2,"depth":depth
+            }))
+            .unwrap();
+        let mut explicit = Document::default();
+        explicit
+            .execute(json!({"command":"inset","face":4,"distance":0.2}))
+            .unwrap();
+        let separate = explicit
+            .execute(json!({"command":"extrude","face":4,"distance":depth}))
+            .unwrap();
+        assert_closed(&combined);
+        assert_eq!(combined["mesh"], separate["mesh"]);
+        assert_eq!(
+            combined["operation"]["created_faces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            8
+        );
+    }
+}
+
+#[test]
+fn thicken_closes_a_bent_open_sheet_and_leaves_other_objects_alone() {
+    let mut document = Document::default();
+    let sheet = document
+        .execute(json!({
+            "command":"loft","name":"Roof sheet","closed":false,
+            "contours":[[[3,0,0],[4,0.2,0],[5,0,0]],[[3,0,2],[4,0.2,2],[5,0,2]]]
+        }))
+        .unwrap();
+    let object = sheet["operation"]["object"].as_u64().unwrap();
+    assert_eq!(sheet["validation"]["boundary_edges"], 6);
+    assert_rejected(
+        &mut document,
+        json!({"command":"thicken","object":object,"thickness":0.3}),
+    );
+    let result = document
+        .execute(json!({
+            "command":"thicken","object":object,"thickness":0.3,"direction":[0,-1,0]
+        }))
+        .unwrap();
+    assert_eq!(result["validation"]["boundary_edges"], 0);
+    assert_eq!(result["validation"]["non_manifold_edges"], 0);
+    assert_eq!(
+        result["operation"]["cap_faces"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        result["operation"]["wall_faces"].as_array().unwrap().len(),
+        6
+    );
+    assert_eq!(
+        result["mesh"]["vertices"]["1"],
+        sheet["mesh"]["vertices"]["1"]
+    );
+    assert_rejected(
+        &mut document,
+        json!({"command":"thicken","object":object,"thickness":0.3}),
+    );
+}
+
+#[test]
 fn inset_offsets_edges_by_distance_and_can_be_extruded() {
     let mut document = Document::default();
     let inset = document

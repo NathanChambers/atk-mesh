@@ -603,6 +603,133 @@ fn bake_ik(rig: &mut Rig, name: &str, request: &Value) -> Result<Value, String> 
     Ok(json!({"name":name,"samples":steps + 1,"clamped_samples":clamped,"max_target_error":max_error}))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WeightEasing {
+    Linear,
+    Smoothstep,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WeightRamp {
+    bones: [String; 2],
+    start: [f64; 3],
+    end: [f64; 3],
+    easing: WeightEasing,
+}
+
+fn weight_ramp(mesh: &Mesh, request: &Value) -> Result<BTreeMap<u64, Vec<Influence>>, String> {
+    let ramp: WeightRamp = serde_json::from_value(request["ramp"].clone())
+        .map_err(|error| error.to_string())?;
+    if ramp.bones[0] == ramp.bones[1] {
+        return Err("weight ramp requires two distinct bones".into());
+    }
+    let rig = mesh.rig.as_ref().ok_or("define a rig first")?;
+    for name in &ramp.bones {
+        if !rig.bones.iter().any(|bone| bone.name == *name) {
+            return Err(format!("unknown weight ramp bone {name}"));
+        }
+    }
+    let span = sub(ramp.end, ramp.start);
+    let span_length = length(span);
+    if !span_length.is_finite() || span_length <= 1e-12 {
+        return Err("weight ramp start and end must define a finite nonzero span".into());
+    }
+    let axis = mul(span, 1.0 / span_length);
+    let vertices: BTreeSet<u64> = match (request.get("object"), request.get("vertices")) {
+        (Some(_), Some(_)) => return Err("scope weight ramp by object or vertices".into()),
+        (Some(object), None) => {
+            let object = object.as_u64().and_then(|id| mesh.objects.get(&id))
+                .ok_or("unknown weight ramp object")?;
+            object.vertices.clone()
+        }
+        (None, Some(vertices)) => serde_json::from_value(vertices.clone())
+            .map_err(|_| "vertices must contain vertex IDs")?,
+        (None, None) => mesh.selection.clone(),
+    };
+    if vertices.is_empty() {
+        return Err("weight ramp scope is empty".into());
+    }
+
+    let mut weights = BTreeMap::new();
+    for vertex in vertices {
+        let point = mesh.vertices.get(&vertex).ok_or_else(|| format!("unknown vertex {vertex}"))?;
+        let mut t = dot(sub(*point, ramp.start), axis) / span_length;
+        if !t.is_finite() {
+            return Err("weight ramp projection must be finite".into());
+        }
+        t = t.clamp(0.0, 1.0);
+        if matches!(ramp.easing, WeightEasing::Smoothstep) {
+            t = t * t * (3.0 - 2.0 * t);
+        }
+        let influences = ramp.bones.iter().zip([1.0 - t, t])
+            .filter(|(_, weight)| *weight > 0.0)
+            .map(|(bone, weight)| Influence { bone: bone.clone(), weight })
+            .collect();
+        weights.insert(vertex, influences);
+    }
+    Ok(weights)
+}
+
+fn rigid_weights(mesh: &Mesh, request: &Value, bone: &Value) -> Result<BTreeMap<u64, Vec<Influence>>, String> {
+    let rig = mesh.rig.as_ref().ok_or("define a rig first")?;
+    let bone = bone.as_str().ok_or("bone must be a name")?;
+    if !rig.bones.iter().any(|candidate| candidate.name == bone) {
+        return Err(format!("unknown bone {bone}"));
+    }
+    if request.get("vertices").is_some() {
+        return Err("rigid binding uses object scope".into());
+    }
+    let object = request["object"].as_u64().and_then(|id| mesh.objects.get(&id))
+        .ok_or("rigid binding requires an existing object")?;
+    let influences = vec![Influence { bone: bone.to_owned(), weight: 1.0 }];
+    Ok(object.vertices.iter().map(|&id| (id, influences.clone())).collect())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CurveChannel {
+    #[serde(default)]
+    rotation: [f64; 3],
+    #[serde(default)]
+    translation: [f64; 3],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedCurve {
+    keys: Vec<[f64; 2]>,
+    channels: BTreeMap<String, CurveChannel>,
+}
+
+fn animation_clip(request: &Value) -> Result<Clip, String> {
+    let mut input = request["clip"].clone();
+    let Some(curve) = request.get("shared_curve") else {
+        return serde_json::from_value(input).map_err(|error| error.to_string());
+    };
+    let curve: SharedCurve = serde_json::from_value(curve.clone()).map_err(|error| error.to_string())?;
+    if curve.keys.is_empty() || curve.channels.is_empty() {
+        return Err("shared_curve requires keys and channels".into());
+    }
+    if let Some(clip) = input.as_object_mut() {
+        clip.entry("tracks").or_insert_with(|| json!({}));
+    }
+    let mut clip: Clip = serde_json::from_value(input).map_err(|error| error.to_string())?;
+    for (bone, channel) in curve.channels {
+        if clip.tracks.contains_key(&bone) {
+            return Err(format!("shared curve channel overlaps explicit track {bone}"));
+        }
+        let keys = curve.keys.iter().map(|&[time, value]| Keyframe {
+            time,
+            rotation: mul(channel.rotation, value),
+            translation: mul(channel.translation, value),
+        }).collect();
+        clip.tracks.insert(bone, keys);
+    }
+    Ok(clip)
+}
+
 pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Value, String> {
     let mut operation = None;
     match command {
@@ -632,9 +759,14 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             }
         }
         "skin_weights_set" => {
+            let weights: BTreeMap<u64, Vec<Influence>> = match (request.get("weights"), request.get("ramp"), request.get("bone")) {
+                (Some(weights), None, None) => serde_json::from_value(weights.clone())
+                    .map_err(|error| error.to_string())?,
+                (None, Some(_), None) => weight_ramp(mesh, request)?,
+                (None, None, Some(bone)) => rigid_weights(mesh, request, bone)?,
+                _ => return Err("provide exactly one of weights, ramp or bone".into()),
+            };
             let rig = mesh.rig.as_mut().ok_or("define a rig first")?;
-            let weights: BTreeMap<u64, Vec<Influence>> =
-                serde_json::from_value(request["weights"].clone()).map_err(|error| error.to_string())?;
             for (id, influences) in weights {
                 if !mesh.vertices.contains_key(&id) {
                     return Err(format!("unknown vertex {id}"));
@@ -651,7 +783,7 @@ pub(super) fn edit(mesh: &mut Mesh, command: &str, request: &Value) -> Result<Va
             let name = request["name"].as_str().filter(|name| valid_name(name)).ok_or("clip name is required")?;
             match command {
                 "animation_set" => {
-                    let clip = serde_json::from_value(request["clip"].clone()).map_err(|error| error.to_string())?;
+                    let clip = animation_clip(request)?;
                     rig.clips.insert(name.into(), clip);
                 }
                 "animation_remove" => {

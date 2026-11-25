@@ -149,3 +149,63 @@ fn animated_glb_encodes_skin_bindings_root_motion_and_clip_interpolation() {
     assert_eq!(times.len() / 4, 121);
     assert_eq!(f32::from_le_bytes(translations[30*12+8..30*12+12].try_into().unwrap()), 0.0625);
 }
+#[test]
+fn projected_weights_and_shared_curve_match_explicit_rig_data() {
+    let mut document = gpt_mesh::Document::default();
+    document.execute(serde_json::json!({
+        "command":"rig_set","rig":{"bones":[
+            {"name":"parent","position":[0,0,0]},
+            {"name":"child","parent":"parent","position":[0,1,0]}
+        ]}
+    })).unwrap();
+    let run = |document: &mut gpt_mesh::Document, request| document.execute(request).unwrap();
+    run(&mut document, serde_json::json!({
+        "command":"skin_weights_set","vertices":[1,2,3],
+        "ramp":{"bones":["parent","child"],"start":[-2,0,0],"end":[2,0,0],"easing":"smoothstep"}
+    }));
+    run(&mut document, serde_json::json!({
+        "command":"animation_set","name":"Shared","clip":{"duration":1},
+        "shared_curve":{"keys":[[0,0],[0.5,-0.5],[1,1]],"channels":{
+            "parent":{"rotation":[0,0,20]},"child":{"translation":[0,0,0.5]}
+        }}
+    }));
+    let query = serde_json::json!({"command":"query_rig","response":"full"});
+    let generated = run(&mut document, query.clone());
+    run(&mut document, serde_json::json!({
+        "command":"skin_weights_set","weights":{
+            "1":[{"bone":"parent","weight":0.84375},{"bone":"child","weight":0.15625}],
+            "2":[{"bone":"parent","weight":0.15625},{"bone":"child","weight":0.84375}],
+            "3":[{"bone":"parent","weight":0.15625},{"bone":"child","weight":0.84375}]
+        }
+    }));
+    run(&mut document, serde_json::json!({
+        "command":"animation_set","name":"Shared","clip":{"duration":1,"tracks":{
+            "parent":[{"time":0},{"time":0.5,"rotation":[0,0,-10]},{"time":1,"rotation":[0,0,20]}],
+            "child":[{"time":0},{"time":0.5,"translation":[0,0,-0.25]},{"time":1,"translation":[0,0,0.5]}]
+        }}
+    }));
+    assert_eq!(generated, run(&mut document, query));
+}
+
+#[test]
+fn rigid_binding_matches_explicit_weights_for_one_object() {
+    let mut document = fixture();
+    let created = document.execute(json!({
+        "command":"object_instance","object":1,"name":"Collar","value":[3,0,0]
+    })).unwrap();
+    let object = created["operation"]["object"].as_u64().unwrap();
+    let query = json!({"command":"query_rig","response":"full"});
+    let before = document.execute(query.clone()).unwrap();
+    document.execute(json!({"command":"skin_weights_set","object":object,"bone":"upper"})).unwrap();
+    let rigid = document.execute(query.clone()).unwrap();
+    assert_eq!(rigid["rig"]["weights"]["1"], before["rig"]["weights"]["1"]);
+    document.execute(json!({"command":"undo"})).unwrap();
+    assert_eq!(before, document.execute(query.clone()).unwrap());
+    let weights: std::collections::BTreeMap<_, _> = (9..=16)
+        .map(|id| (id, json!([{"bone":"upper","weight":1.0}])))
+        .collect();
+    document.execute(json!({"command":"skin_weights_set","weights":weights})).unwrap();
+    assert_eq!(rigid, document.execute(query.clone()).unwrap());
+    assert!(document.execute(json!({"command":"skin_weights_set","object":object,"bone":"missing"})).is_err());
+    assert_eq!(rigid, document.execute(query).unwrap());
+}

@@ -36,6 +36,8 @@ fn generated_uvs_cover_sides_caps_poles_and_periodic_seams() {
     for mut request in [
         json!({"command":"sweep","profile":[[-0.1,-0.1],[0.1,-0.1],[0.1,0.1],[-0.1,0.1]],"path":[[0,0,0],[0,1,0],[0.5,3,0]]}),
         json!({"command":"extrude_polygon","points":[[0,0],[2,0],[2,1],[0,1]],"depth":2,"bevel":0.1}),
+        json!({"command":"extrude_polygon","points":[[0,0],[6,0],[6,4],[0,4]],
+            "holes":[[[1,1],[2,1],[2,3],[1,3]],[[4,1],[4,2],[5,2],[5,1]]],"depth":0.5}),
         json!({"command":"revolve","segments":8,"sweep":270,"profile":[[0,0],[1,0],[1,2],[0,2]]}),
         json!({"command":"revolve","segments":8,"closed_profile":true,"profile":[[1,0],[2,0],[2,2],[1,2]]}),
         json!({"command":"loft","closed":false,"contours":[[[0,0,0],[1,0,0],[2,0,0]],[[0,1,0],[1,1,0],[2,1,0]]]}),
@@ -76,6 +78,46 @@ fn generated_uvs_cover_sides_caps_poles_and_periodic_seams() {
         }
         let checker=doc.execute(json!({"command":"capture","mode":"uv_checker","clean":true,"width":128,"height":128})).unwrap();
         assert_eq!(checker["mode"], "uv_checker");
+    }
+}
+
+#[test]
+fn polygon_holes_create_closed_passages_and_reject_touching_loops() {
+    let mut document = Document::default();
+    let outer = [[0, 0], [6, 0], [6, 4], [0, 4]];
+    let result = document
+        .execute(json!({
+            "command":"extrude_polygon","name":"Perforated wall","axis":"Z","center":[0,0,3],
+            "depth":0.5,"points":outer,
+            "holes":[[[1,1],[2,1],[2,3],[1,3]],[[4,1],[4,2],[5,2],[5,1]]]
+        }))
+        .unwrap();
+    assert_eq!(result["operation"]["hole_count"], 2);
+    assert_eq!(
+        result["operation"]["created_face_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        40
+    );
+    assert_eq!(result["validation"]["boundary_edges"], 0);
+    assert_eq!(result["validation"]["non_manifold_edges"], 0);
+    let saved = document.execute(json!({"command":"save"})).unwrap();
+    for holes in [
+        json!([[[0, 1], [2, 1], [2, 3], [0, 3]]]),
+        json!([
+            [[1, 1], [3, 1], [3, 3], [1, 3]],
+            [[2, 2], [4, 2], [4, 3], [2, 3]]
+        ]),
+        json!([
+            [[1, 1], [4, 1], [4, 3], [1, 3]],
+            [[2, 2], [3, 2], [3, 2.5], [2, 2.5]]
+        ]),
+    ] {
+        assert!(document.execute(json!({
+            "command":"extrude_polygon","name":"Invalid wall","axis":"Z","points":outer,"holes":holes
+        })).is_err());
+        assert_eq!(saved, document.execute(json!({"command":"save"})).unwrap());
     }
 }
 

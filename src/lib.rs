@@ -491,6 +491,9 @@ impl Document {
         if let Some(collection) = request.get("collection")
             && matches!(command, "object_move" | "object_rotate" | "object_scale" | "shade_smooth")
         {
+            if command == "object_move" && request.get("align").is_some() {
+                return Err("bounds alignment requires a single object".into());
+            }
             if request.get("object").is_some() {
                 return Err("use collection or object, not both".into());
             }
@@ -678,13 +681,21 @@ impl Document {
             "select_box" => {
                 let min = vector(&request["min"])?;
                 let max = vector(&request["max"])?;
-                self.mesh.selection = self
+                let matches: BTreeSet<u64> = self
                     .mesh
                     .vertices
                     .iter()
                     .filter(|(_, p)| (0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]))
                     .map(|(id, _)| *id)
                     .collect();
+                let mode = request.get("mode").map_or(Some("replace"), Value::as_str);
+                self.mesh.selection = match mode {
+                    Some("replace") => matches,
+                    Some("add") => self.mesh.selection.union(&matches).copied().collect(),
+                    Some("subtract") => self.mesh.selection.difference(&matches).copied().collect(),
+                    Some("intersect") => self.mesh.selection.intersection(&matches).copied().collect(),
+                    _ => return Err("selection mode must be replace, add, subtract or intersect".into()),
+                };
             }
             "select_image" => {
                 let id = request["view_id"].as_u64().ok_or("view_id is required")?;
@@ -755,9 +766,25 @@ impl Document {
                 }
             }
             "extrude" => {
+                if request.get("faces").is_some() {
+                    return topology::edit(&mut self.mesh, command, request).map(Some);
+                }
                 let face_id = request["face"].as_u64().ok_or("face is required")?;
                 let face = self.mesh.faces.get(&face_id).ok_or("unknown face")?.clone();
-                let offset = vector(&request["value"])?;
+                let offset = match (request.get("value"), request.get("distance")) {
+                    (Some(value), None) => vector(value)?,
+                    (None, Some(distance)) => {
+                        let distance = distance.as_f64()
+                            .filter(|value| value.is_finite() && *value != 0.0)
+                            .ok_or("extrude distance must be finite and nonzero")?;
+                        let normal = normals::face(&self.mesh, &face);
+                        if normal == [0.0; 3] {
+                            return Err("cannot extrude by distance without a face normal".into());
+                        }
+                        normal.map(|component| component * distance)
+                    }
+                    _ => return Err("extrude requires either value or distance".into()),
+                };
                 let mut cap = vec![];
                 for id in &face {
                     let p = self.mesh.vertices[id];
@@ -776,7 +803,7 @@ impl Document {
                 self.mesh.selection = cap.into_iter().collect();
             }
             "weld" | "split_edge" | "split_vertices" | "split_face" | "inset" | "bevel_vertex"
-            | "bridge_faces" => {
+            | "bridge_faces" | "thicken" => {
                 let operation = topology::edit(&mut self.mesh, command, request)?;
                 return Ok(Some(operation));
             }

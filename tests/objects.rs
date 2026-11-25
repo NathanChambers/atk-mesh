@@ -6,6 +6,44 @@ fn create_gate(document: &mut Document) -> Value {
 }
 
 #[test]
+fn object_move_aligns_bounds_and_keeps_other_axes() {
+    let mut document = Document::default();
+    create_gate(&mut document);
+    let result = document.execute(json!({
+        "command":"object_move","object":2,
+        "align":{"target":1,"axis":"Y","from":"min","to":"max","offset":0.25}
+    })).unwrap();
+    assert_eq!(result["mesh"]["objects"]["2"]["origin"], json!([2.0,1.25,0.0]));
+    assert_eq!(result["mesh"]["vertices"]["9"], json!([2.0,1.25,-0.1]));
+}
+
+#[test]
+fn select_box_combines_vertex_sets() {
+    let mut document = Document::default();
+    let mut select = |mode, min, max| {
+        document.execute(json!({"command":"select_box","mode":mode,"min":min,"max":max}))
+            .unwrap()["mesh"]["selection"].clone()
+    };
+    assert_eq!(select("replace", [-1,-1,-1], [-1,1,1]), json!([1,4,5,8]));
+    assert_eq!(select("add", [1,-1,-1], [1,1,1]), json!([1,2,3,4,5,6,7,8]));
+    assert_eq!(select("subtract", [-1,-1,-1], [1,1,-1]), json!([5,6,7,8]));
+    assert_eq!(select("intersect", [1,-1,-1], [1,1,1]), json!([6,7]));
+}
+
+#[test]
+fn bounds_center_rotation_keeps_the_authored_origin() {
+    let mut document = Document::default();
+    create_gate(&mut document);
+    let result = document.execute(json!({
+        "command":"object_rotate","object":2,"value":[0,0,180],"pivot":"bounds_center"
+    })).unwrap();
+    assert_eq!(result["mesh"]["objects"]["2"]["origin"], json!([2.0,0.0,0.0]));
+    let point = &result["mesh"]["vertices"]["9"];
+    assert!((point[0].as_f64().unwrap() - 3.0).abs() < 1e-12);
+    assert!((point[1].as_f64().unwrap() - 2.0).abs() < 1e-12);
+}
+
+#[test]
 fn stage_labels_round_trip_and_legacy_approval_requires_review() {
     let mut document = Document::default();
     create_gate(&mut document);

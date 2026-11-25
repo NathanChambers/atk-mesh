@@ -37,8 +37,12 @@ pub(super) fn generator(command: &str) -> bool {
 }
 
 pub(super) fn bounds(mesh: &Mesh, vertices: &BTreeSet<u64>) -> Value {
+    bounds_points(mesh, vertices).map_or(Value::Null, |[min, max]| json!({"min":min,"max":max}))
+}
+
+pub(super) fn bounds_points(mesh: &Mesh, vertices: &BTreeSet<u64>) -> Option<[[f64; 3]; 2]> {
     if vertices.is_empty() {
-        return Value::Null;
+        return None;
     }
     let min: [f64; 3] = std::array::from_fn(|axis| {
         vertices
@@ -52,7 +56,7 @@ pub(super) fn bounds(mesh: &Mesh, vertices: &BTreeSet<u64>) -> Value {
             .map(|id| mesh.vertices[id][axis])
             .fold(f64::NEG_INFINITY, f64::max)
     });
-    json!({"min":min,"max":max})
+    Some([min, max])
 }
 
 pub(super) fn vertices(mesh: &Mesh, faces: &BTreeSet<u64>) -> BTreeSet<u64> {

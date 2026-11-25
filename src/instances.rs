@@ -91,6 +91,44 @@ fn multiply(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 }
 
 pub(super) fn create(mesh: &mut Mesh, master: u64, request: &Value) -> Result<Value, String> {
+    if let Some(array) = request.get("array") {
+        return create_linear_array(mesh, master, request, array);
+    }
+    create_one(mesh, master, request)
+}
+
+fn create_linear_array(
+    mesh: &mut Mesh,
+    master: u64,
+    request: &Value,
+    array: &Value,
+) -> Result<Value, String> {
+    if request.get("value").is_some() {
+        return Err("use array step or value, not both".into());
+    }
+    let prefix = request["name"].as_str().filter(|name| !name.trim().is_empty())
+        .ok_or("object_instance array requires a name prefix")?;
+    let count = array["count"].as_u64().filter(|count| (1..=256).contains(count))
+        .ok_or("array count must be 1..256")? as usize;
+    let step = vector(&array["step"])?;
+    if step == [0.0; 3] {
+        return Err("array step must be nonzero".into());
+    }
+    if mesh.objects[&master].vertices.len().saturating_mul(count) > 150000 {
+        return Err("array exceeds the 150000 new vertex budget".into());
+    }
+
+    let mut copies = Vec::with_capacity(count);
+    let mut placement = request.clone();
+    for index in 1..=count {
+        placement["name"] = json!(format!("{prefix} {index}"));
+        placement["value"] = json!(step.map(|coordinate| coordinate * index as f64));
+        copies.push(create_one(mesh, master, &placement)?["object"].clone());
+    }
+    Ok(json!({"master_object":master,"objects":copies,"linked":true}))
+}
+
+fn create_one(mesh: &mut Mesh, master: u64, request: &Value) -> Result<Value, String> {
     if let Some(link) = &mesh.objects[&master].instance {
         return Err(format!(
             "use master object {} to create an instance",
@@ -331,9 +369,10 @@ pub(super) fn placement(
         }
         "object_rotate" => {
             let angles = vector(&request["value"])?;
-            let local = std::array::from_fn(|axis| link.anchor[axis] - origin[axis]);
+            let pivot = request.get("pivot").map(vector).transpose()?.unwrap_or(origin);
+            let local = std::array::from_fn(|axis| link.anchor[axis] - pivot[axis]);
             let local = rotate(local, angles);
-            link.anchor = std::array::from_fn(|axis| origin[axis] + local[axis]);
+            link.anchor = std::array::from_fn(|axis| pivot[axis] + local[axis]);
             let rotation = rotation_matrix(angles);
             link.rotation = multiply(rotation, link.rotation);
         }
@@ -448,6 +487,17 @@ pub(super) fn finish(before: &Mesh, mesh: &mut Mesh, request: &Value) -> Result<
                 link.rotation = multiply(link.rotation, inverse);
             } else {
                 link.master_basis = multiply(link.master_basis, inverse);
+            }
+            if let Some(pivot) = request.get("pivot") {
+                let previous = &before.objects[&link.master];
+                let pivot = objects::rotation_pivot(before, previous, pivot)?;
+                let origin_from_pivot = std::array::from_fn(|axis| previous.origin[axis] - pivot[axis]);
+                let rotated_origin = rotated(&rotation, origin_from_pivot);
+                let shift = std::array::from_fn(|axis| rotated_origin[axis] - origin_from_pivot[axis]);
+                let shift = link.transform_direction(shift, false);
+                for (axis, value) in shift.into_iter().enumerate() {
+                    link.anchor[axis] -= value;
+                }
             }
         }
         if command == "object_set_origin" && request["object"].as_u64() == Some(link.master) {

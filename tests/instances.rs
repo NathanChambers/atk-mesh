@@ -27,6 +27,65 @@ fn assert_close(actual: [f64; 3], expected: [f64; 3]) {
 }
 
 #[test]
+fn linear_array_matches_single_placements_and_rolls_back_on_name_collision() {
+    let mut document = Document::default();
+    let before = state(&mut document);
+    let result = document.execute(json!({
+        "command":"object_instance","object":1,"name":"Vent",
+        "array":{"count":4,"step":[3,0,0]}
+    })).unwrap();
+    assert_eq!(result["operation"]["objects"], json!([2,3,4,5]));
+    let array = state(&mut document);
+
+    let mut explicit = Document::default();
+    for index in 1..=4 {
+        explicit.execute(json!({
+            "command":"object_instance","object":1,"name":format!("Vent {index}"),
+            "value":[index * 3,0,0]
+        })).unwrap();
+    }
+    assert_eq!(array["mesh"], state(&mut explicit)["mesh"]);
+    document.execute(json!({"command":"undo"})).unwrap();
+    assert_eq!(before["mesh"], state(&mut document)["mesh"]);
+
+    document.execute(json!({
+        "command":"object_instance","object":1,"name":"Vent 2","value":[0,3,0]
+    })).unwrap();
+    let before_collision = state(&mut document);
+    assert!(document.execute(json!({
+        "command":"object_instance","object":1,"name":"Vent",
+        "array":{"count":4,"step":[3,0,0]}
+    })).is_err());
+    assert_eq!(before_collision, state(&mut document));
+}
+
+#[test]
+fn temporary_pivots_preserve_master_followers_and_rotate_linked_placements() {
+    let mut document = Document::default();
+    document.execute(json!({
+        "command":"object_instance","object":1,"name":"Linked","value":[4,0,0],"scale":[2,1,1]
+    })).unwrap();
+    let original = state(&mut document);
+    document.execute(json!({
+        "command":"object_rotate","object":1,"pivot":[2,0,0],"value":[0,0,90]
+    })).unwrap();
+    let after = state(&mut document);
+    for id in 9..=16 {
+        assert_close(point(&after["mesh"], id), point(&original["mesh"], id));
+    }
+    assert_eq!(after["mesh"]["objects"]["1"]["origin"], json!([0.0,0.0,0.0]));
+    document.execute(json!({
+        "command":"object_rotate","object":2,"pivot":[0,0,0],"value":[0,0,90]
+    })).unwrap();
+    let rotated = state(&mut document);
+    for id in 9..=16 {
+        let [x, y, z] = point(&original["mesh"], id);
+        assert_close(point(&rotated["mesh"], id), [-y,x,z]);
+    }
+    assert_eq!(rotated["mesh"]["objects"]["2"]["origin"], json!([4.0,0.0,0.0]));
+}
+
+#[test]
 fn scaled_placement_propagates_master_edits_and_round_trips() {
     let mut document = Document::default();
     document.execute(json!({"command":"object_instance","object":1,"name":"Scaled","value":[4,0,0],"scale":[2,3,4]})).unwrap();
