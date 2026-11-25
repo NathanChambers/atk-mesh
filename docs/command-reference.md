@@ -435,7 +435,7 @@ For FBX, send `{"command":"import_fbx","path":"cargo.fbx"}`. The same workspace 
 
 Import is geometry only: UVs, textures, materials, vertex colors and source normals are not retained; the tool recomputes shading. Keep the original GLB alongside the project. Animation, skins, morph targets, required extensions, sparse/normalized geometry accessors, external buffers and non-triangle primitives are rejected. Imports are limited to 64 MiB and one million vertices/faces. Container and transform conventions follow the [Khronos glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html).
 
-Set `$env:MESH_PORT = "7879"` before starting a server and invoking the CLI to work alongside another workspace. Both programs default to port 7878; each server owns its own workspace.
+Set `$env:MESH_PORT = "7879"` before starting a server and invoking the CLI to work alongside another workspace. Without a configured port, each server gets an available port from the OS. Pass the printed port to the CLI with `--port PORT`.
 
 ### Conservative cleanup and part separation
 

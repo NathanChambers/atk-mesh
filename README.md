@@ -28,7 +28,7 @@ Add the [`atk-mesh` skill](.agents/skills/atk-mesh/SKILL.md) using your agent's 
 
 ## Open the viewer
 
-Run `atk-mesh` from your project directory and open the [Mesh viewer](http://127.0.0.1:7878). Once your agent has saved a workspace, choose it with the folder button. From there, orbit the model, switch between shaded and wireframe views, or preview an animation.
+Run `atk-mesh` from your project directory and open the viewer URL printed at startup. Once your agent has saved a workspace, choose it with the folder button. From there, orbit the model, switch between shaded and wireframe views, or preview an animation.
 
 ## Learn more
 

@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; default 7878)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nUse a distinct port for the project viewer and each editor. Stop with Ctrl+C."
+            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
         );
         println!(
             "\nList meshes: atk-mesh-cli --port 7878 --list-workspaces\nStart an editor: atk-mesh --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | atk-mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
@@ -87,13 +87,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if compress_recordings && workspace.is_none() {
         return Err("--compress-recordings requires a workspace editor".into());
     }
-    let port = port.unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "7878".into()));
+    let port = port.unwrap_or_else(|| std::env::var("MESH_PORT").unwrap_or_else(|_| "0".into()));
     let port: u16 = port
         .parse()
-        .map_err(|_| "port must be an integer from 1 to 65535")?;
-    if port == 0 {
-        return Err("port must be an integer from 1 to 65535".into());
-    }
+        .map_err(|_| "port must be an integer from 0 to 65535")?;
 
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     let mut host = if let Some(workspace) = workspace {
@@ -102,12 +99,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let root = project.as_deref().unwrap_or(".");
         WorkspaceHost::open_viewer(Path::new(root))?
     };
-    let url = format!("http://127.0.0.1:{port}");
+    let address = listener.local_addr()?;
+    let port = address.port();
+    let url = format!("http://{address}");
     if matches!(&host, WorkspaceHost::Viewer { .. }) {
         println!("Project viewer: {url}");
         println!("List meshes: atk-mesh-cli --port {port} --list-workspaces");
     } else {
         println!("Mesh editor API: {url}");
+        println!("Send commands with atk-mesh-cli --port {port}");
     }
     let updates = Arc::new(ViewerUpdates::default());
     for connection in listener.incoming() {
