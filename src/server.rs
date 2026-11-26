@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Accepted for compatibility; open the viewer URL manually\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
+            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Print the viewer URL without launching a browser\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
         );
         println!(
             "\nList meshes: atk-mesh-cli --port 7878 --list-workspaces\nStart an editor: atk-mesh --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | atk-mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
@@ -108,6 +108,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if matches!(&host, WorkspaceHost::Viewer { .. }) {
         println!("Project viewer: {url}");
         println!("List meshes: atk-mesh-cli --port {port} --list-workspaces");
+        if !headless {
+            #[cfg(target_os = "windows")]
+            let mut browser = {
+                let mut command = std::process::Command::new("rundll32.exe");
+                command.arg("url.dll,FileProtocolHandler");
+                command
+            };
+            #[cfg(target_os = "macos")]
+            let mut browser = std::process::Command::new("open");
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            let mut browser = std::process::Command::new("xdg-open");
+            if let Err(error) = browser.arg(&url).spawn() {
+                eprintln!("Could not launch browser ({error}). Open {url} to view projects.");
+            }
+        }
     } else {
         println!("Mesh editor API: {url}");
         println!("Send commands with atk-mesh-cli --port {port}");
@@ -219,6 +234,24 @@ fn handle(
                     "application/json",
                     json!({"ok":false,"error":error}).to_string(),
                 ),
+            }
+        }
+        ["GET", "/project.json", _] => {
+            let file = parse_workspace_query(query).and_then(|workspace| host.project_file(workspace.as_deref()));
+            match file {
+                Ok((mut file, length, tag)) => {
+                    if let Some(tag) = tag {
+                        etag_header = format!("ETag: {tag}\r\n");
+                        if if_none_match.as_ref() == Some(&tag) {
+                            write!(stream, "HTTP/1.0 304 Not Modified\r\n{etag_header}Connection: close\r\n\r\n")?;
+                            return Ok(());
+                        }
+                    }
+                    write!(stream, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n{etag_header}Content-Length: {length}\r\nConnection: close\r\n\r\n")?;
+                    std::io::copy(&mut file, stream)?;
+                    return Ok(());
+                }
+                Err(error) => (400, "application/json", json!({"ok":false,"error":error}).to_string()),
             }
         }
         ["GET", "/state", _] => {

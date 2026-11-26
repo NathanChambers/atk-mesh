@@ -21,6 +21,7 @@ let workspace = null;
 let savedViewerSnapshot = null;
 let workspaceMode = null;
 let workspacePaths = [];
+let directProjects = false;
 let workspaceMatches = [];
 let workspaceSelection = -1;
 let nextDiscovery = 0;
@@ -378,8 +379,8 @@ function setConnection(connected) {
     element('connection-dot').className = connected === true ? 'live' : 'offline';
 }
 
-function showState(state) {
-    const nextGeometryKey = JSON.stringify([state.mesh.vertices, state.mesh.faces, state.mesh.objects, state.mesh.flat_faces, state.mesh.collections, state.mesh.primary_collections, state.mesh.uvs, state.mesh.textures, state.mesh.face_textures, state.mesh.vertex_colors, state.mesh.rig]);
+function showState(state, fileKey = null) {
+    const nextGeometryKey = fileKey ?? JSON.stringify([state.mesh.vertices, state.mesh.faces, state.mesh.objects, state.mesh.flat_faces, state.mesh.collections, state.mesh.primary_collections, state.mesh.uvs, state.mesh.textures, state.mesh.face_textures, state.mesh.vertex_colors, state.mesh.rig]);
     if (nextGeometryKey !== geometryKey) {
         viewer.setMesh(state.mesh);
         inspector.setMesh(state.mesh);
@@ -407,7 +408,9 @@ async function checkedJson(response) {
 
 async function discoverWorkspaces(options) {
     const data = await readJson('/workspaces', options);
+    const firstDiscovery = workspaceMode === null;
     workspaceMode = data.result.mode;
+    directProjects = data.result.project_file === true;
     const projectViewer = workspaceMode === 'viewer';
     element('workspace-open').hidden = !projectViewer;
     if (projectViewer === false) { return; }
@@ -415,6 +418,11 @@ async function discoverWorkspaces(options) {
     const paths = data.result.workspaces.map(workspace => workspace.path);
     element('workspace-path').textContent = workspaceTarget ?? 'No workspace selected';
     element('workspace-path').title = workspaceTarget ?? '';
+    if (firstDiscovery && workspaceTarget === null) {
+        workspacePaths = paths;
+        openWorkspacePicker();
+        return;
+    }
     if (paths.length === workspacePaths.length && paths.every((path, index) => path === workspacePaths[index])) { return; }
 
     workspacePaths = paths;
@@ -506,6 +514,7 @@ function selectWorkspace(path) {
 }
 
 function requestRefresh() {
+    if (stopped) { return; }
     clearTimeout(timer);
     if (controller !== null) {
         refreshPending = true;
@@ -570,14 +579,23 @@ async function refresh() {
         }
 
         const request = savedStateTag === null ? options : { ...options, headers: { 'If-None-Match': savedStateTag } };
-        const response = await fetch('/state' + query, request);
+        if (directProjects) { clearTimeout(timeout); }
+        const response = await fetch((directProjects ? '/project.json' : '/state') + query, request);
         if (stopped === true) { return; }
         if (response.status === 304) {
             setConnection(true);
             element('notice').hidden = graphicsError === null;
             return;
         }
-        const data = await checkedJson(response);
+        const tag = response.headers?.get('ETag');
+        const data = directProjects && response.ok
+            ? { result: await response.json(), workspace: workspaceTarget }
+            : await checkedJson(response);
+        if (directProjects && Object.values(data.result?.mesh?.objects || {}).some(object => object.stage === 'production_ready')) {
+            // Older projects need the editor's review validation before displaying approval.
+            const reviewed = await readJson('/state' + query, options);
+            data.result = reviewed.result;
+        }
         if (stopped === true) { return; }
 
         element('objects-open').disabled = false;
@@ -598,7 +616,7 @@ async function refresh() {
             }
         }
         element('model-name').textContent = workspaceMode === 'viewer' ? 'Saved model' : 'Live model';
-        showState(data.result);
+        showState(data.result, directProjects ? tag : null);
         if (restoreView === true) {
             restoreWorkspaceView();
             savedViewerSnapshot = viewerSnapshot();
@@ -612,7 +630,7 @@ async function refresh() {
 
         setConnection(false);
         element('notice').hidden = false;
-        if (error instanceof TypeError || error.name === 'AbortError') {
+        if ((error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) || error.name === 'AbortError') {
             retrySnapshot = true;
             element('notice').textContent = geometryKey === null ? 'Waiting for the mesh server. Retrying automatically…' : 'Connection interrupted. Showing the last model; retrying automatically…';
         } else {

@@ -652,6 +652,39 @@ test('project viewer refreshes on push and catches up when the stream reconnects
     }
 });
 
+test('viewer launch opens the workspace picker and discovers newly saved projects', async () => {
+    const environment = browserEnvironment();
+    environment.window.location = new URL('http://localhost/');
+    const paths = [];
+    let poll;
+    environment.replace('setTimeout', (callback, delay) => {
+        if (callback.name === 'refresh') { poll = callback; }
+        return 1;
+    });
+    environment.replace('clearTimeout', () => {});
+    let now = 0;
+    const originalNow = Date.now;
+    Date.now = () => now;
+    environment.replace('fetch', async path => {
+        assert.equal(path, '/workspaces');
+        return { ok: true, json: async () => ({ ok: true, result: { mode: 'viewer', workspaces: paths.map(path => ({ path })) } }) };
+    });
+    try {
+        await import('../web/app.js?launch-picker');
+        await new Promise(setImmediate);
+        const element = id => environment.document.getElementById(id);
+        assert.equal(element('workspace-picker').open, true);
+        paths.push('.mesh/fuel');
+        now += 5000;
+        await poll();
+        assert.deepEqual(element('workspace-results').children.map(option => option.textContent), paths);
+    } finally {
+        Date.now = originalNow;
+        environment.window.dispatchEvent(new Event('pagehide'));
+        environment.restore();
+    }
+});
+
 test('project viewer scopes selection and polls saved revisions without writing', async () => {
     const environment = browserEnvironment();
     const url = new URL('http://localhost/?workspace=models%2Ffin');

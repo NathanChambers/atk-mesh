@@ -62,13 +62,17 @@ export function triangulateFace(points) {
 
 export function buildMeshData(mesh, origin, scale) {
     const poseSources = mesh.rig === undefined ? null : { surface: [], edge: [] };
-    const positions = [];
-    const normals = [];
-    const faceColors = [];
-    const objectColors = [];
-    const collectionColors = [];
-    const uvCoordinates = [];
-    const vertexColors = [];
+    const faces = Object.values(mesh.faces);
+    const triangleCount = faces.reduce((total, face) => total + Math.max(0, face.length - 2), 0);
+    const surfaceLength = triangleCount * 9;
+    const positions = new Float32Array(surfaceLength);
+    const normals = new Float32Array(surfaceLength);
+    const faceColors = new Float32Array(surfaceLength);
+    const objectColors = new Float32Array(surfaceLength);
+    const collectionColors = new Float32Array(surfaceLength);
+    const uvCoordinates = new Float32Array(surfaceLength);
+    const vertexColors = new Float32Array(surfaceLength);
+    let surfaceOffset = 0;
     const collectionIds = Object.keys(mesh.collections || {}).sort((a, b) => Number(a) - Number(b));
     const collectionPalette = facePalette(collectionIds.length);
     const colorsByCollection = new Map(collectionIds.map((id, index) => [id, collectionPalette[index]]));
@@ -81,15 +85,17 @@ export function buildMeshData(mesh, origin, scale) {
         colorsByObject.set(id, objectPalette[index]);
         for (const vertex of mesh.objects[id].vertices) { owners.set(String(vertex), id); }
     }
-    const edges = [];
+    const edgeCapacity = faces.reduce((total, face) => total + face.length * 6, 0);
+    const edges = new Float32Array(edgeCapacity);
+    let edgeOffset = 0;
     const edgeKeys = new Set();
     const points = {};
     for (const [id, point] of Object.entries(mesh.vertices)) {
         points[id] = point.map((value, axis) => (value - origin[axis]) / scale);
     }
     const faceIds = Object.keys(mesh.faces);
-    const faces = Object.values(mesh.faces);
-    const cornerNormals = buildCornerNormals(mesh);
+    const needsCornerNormals = Object.values(mesh.objects || {}).some(object => object.smooth_angle || object.instance);
+    const cornerNormals = needsCornerNormals ? buildCornerNormals(mesh) : null;
     const palette = facePalette(faces.length);
     for (const [faceIndex, face] of faces.entries()) {
         const object = owners.get(String(face[0])) ?? null;
@@ -99,7 +105,7 @@ export function buildMeshData(mesh, origin, scale) {
         const complete = face.every(vertex => Object.hasOwn(uvValues, vertex));
         let group = groups.at(-1);
         if (group === undefined || group.object !== object || group.texture !== texture) {
-            group = { object, texture, first: positions.length / 3, count: 0, edgeFirst: edges.length / 3, edgeCount: 0 };
+            group = { object, texture, first: surfaceOffset / 3, count: 0, edgeFirst: edgeOffset / 3, edgeCount: 0 };
             groups.push(group);
         }
         const normal = [0, 0, 0];
@@ -116,34 +122,39 @@ export function buildMeshData(mesh, origin, scale) {
             const key = firstId < secondId ? `${firstId}:${secondId}` : `${secondId}:${firstId}`;
             if (edgeKeys.has(key) === false) {
                 edgeKeys.add(key);
-                edges.push(...first, ...second);
+                edges.set(first, edgeOffset);
+                edges.set(second, edgeOffset + 3);
+                edgeOffset += 6;
                 poseSources?.edge.push(firstId, secondId);
             }
         }
         const length = Math.hypot(...normal);
         if (length < 1e-15) { continue; }
 
-        const triangles = triangulateFace(face.map(vertex => points[vertex]));
-        for (const [first, second, third] of triangles) {
-            for (const vertex of [face[first], face[second], face[third]]) {
+        const triangles = face.length === 3 ? [[0, 1, 2]] : triangulateFace(face.map(vertex => points[vertex]));
+        const flatNormal = normal.map(value => value / length);
+        const color = palette[faceIndex].map(value => value / 255);
+        const objectColor = (colorsByObject.get(object) || objectPalette[0]).map(value => value / 255);
+        const collectionColor = (colorsByCollection.get(String(mesh.primary_collections?.[object])) || [128, 128, 128]).map(value => value / 255);
+        for (const triangle of triangles) {
+            for (const corner of triangle) {
+                const vertex = face[corner];
                 poseSources?.surface.push(String(vertex));
                 const uv = uvValues[vertex] || [0, 0];
-                uvCoordinates.push(...uv, complete === true ? 1 : 0);
-                vertexColors.push(...(mesh.vertex_colors?.[vertex] || [1, 1, 1]));
+                uvCoordinates.set([uv[0], uv[1], complete ? 1 : 0], surfaceOffset);
+                vertexColors.set(mesh.vertex_colors?.[vertex] || [1, 1, 1], surfaceOffset);
+                positions.set(points[vertex], surfaceOffset);
+                normals.set(cornerNormals?.[faceIndex][corner] || flatNormal, surfaceOffset);
+                faceColors.set(color, surfaceOffset);
+                objectColors.set(objectColor, surfaceOffset);
+                collectionColors.set(collectionColor, surfaceOffset);
+                surfaceOffset += 3;
             }
-            positions.push(...points[face[first]], ...points[face[second]], ...points[face[third]]);
-            normals.push(...cornerNormals[faceIndex][first], ...cornerNormals[faceIndex][second], ...cornerNormals[faceIndex][third]);
-            const color = palette[faceIndex].map(value => value / 255);
-            const objectColor = (colorsByObject.get(object) || objectPalette[0]).map(value => value / 255);
-            faceColors.push(...color, ...color, ...color);
-            objectColors.push(...objectColor, ...objectColor, ...objectColor);
-            const collectionColor = (colorsByCollection.get(String(mesh.primary_collections?.[object])) || [128, 128, 128]).map(value => value / 255);
-            collectionColors.push(...collectionColor, ...collectionColor, ...collectionColor);
         }
-        group.count = positions.length / 3 - group.first;
-        group.edgeCount = edges.length / 3 - group.edgeFirst;
+        group.count = surfaceOffset / 3 - group.first;
+        group.edgeCount = edgeOffset / 3 - group.edgeFirst;
     }
-    return { positions: new Float32Array(positions), normals: new Float32Array(normals), faceColors: new Float32Array(faceColors), objectColors: new Float32Array(objectColors), collectionColors: new Float32Array(collectionColors), uvCoordinates: new Float32Array(uvCoordinates), vertexColors: new Float32Array(vertexColors), edges: new Float32Array(edges), groups, owners, poseSources };
+    return { positions: positions.subarray(0, surfaceOffset), normals: normals.subarray(0, surfaceOffset), faceColors: faceColors.subarray(0, surfaceOffset), objectColors: objectColors.subarray(0, surfaceOffset), collectionColors: collectionColors.subarray(0, surfaceOffset), uvCoordinates: uvCoordinates.subarray(0, surfaceOffset), vertexColors: vertexColors.subarray(0, surfaceOffset), edges: edges.subarray(0, edgeOffset), groups, owners, poseSources };
 }
 
 export function buildCornerNormals(mesh) {

@@ -45,7 +45,7 @@ impl WorkspaceHost {
             }
             Self::Viewer { root } => {
                 let workspaces = discover(root);
-                json!({"ok":true,"result":{"mode":"viewer","root":root,"workspaces":workspaces}})
+                json!({"ok":true,"result":{"mode":"viewer","project_file":true,"root":root,"workspaces":workspaces}})
             }
         }
     }
@@ -91,6 +91,14 @@ impl WorkspaceHost {
                 Ok((etag, Some(state)))
             }
         }
+    }
+
+    pub fn project_file(&self, workspace: Option<&str>) -> Result<(File, u64, Option<String>), String> {
+        let Self::Viewer { root } = self else { return Err("select a saved project in the viewer".into()); };
+        let directory = resolve(root, workspace)?;
+        let file = File::open(directory.join("project.json")).map_err(|error| error.to_string())?;
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        Ok((file, metadata.len(), saved_state_tag(&directory, &metadata)))
     }
 
     pub fn state_metadata(&self, workspace: Option<&str>) -> Result<Value, String> {
