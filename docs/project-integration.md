@@ -1,4 +1,4 @@
-# Using Mesh Workbench in a project
+# Using atk-mesh in a project
 
 Install the tools using the [README](../README.md#install). Keep the tool source checkout separate from your consuming project. The consuming project needs the installed binaries and a model workspace directory.
 
@@ -152,5 +152,3 @@ Each editor handles requests sequentially for its own mesh. The project viewer r
 For tool development, run `cargo test --locked` and `npm test` in the tool checkout. The Rust CLI integration tests start an isolated server and temporary workspace. Legacy Python smoke scripts can replace the active model, so run them only against a disposable workspace on a separate port.
 
 Start the editor with `--debug` to record all commands and replay snapshots as gzip JSON, regardless of build profile. Ordinary edits save to the project with no replay recording by default. Capture, comparison and review evidence still has trace records. The project and session index remain plain JSON. Existing gzip and plain JSON recordings are readable on the same replay routes. `--compress-recordings` is accepted as an alias for `--debug`.
-
-Run `cargo run --release --locked --example bench_dense -- NEW_DIRECTORY 100000` to time workspace open, a sculpt stroke, capture, undo, save and reopen on a triangular grid. Use `1000000` for the larger fixture and append `--compress-recordings` for a storage comparison. Each run creates a fresh directory and prints elapsed milliseconds and cumulative on-disk bytes.

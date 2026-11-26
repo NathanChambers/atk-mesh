@@ -1,4 +1,4 @@
-use gpt_mesh::{Document, base64};
+use atk_mesh::{Document, base64};
 use serde_json::{Value, json};
 
 #[test]
@@ -247,7 +247,7 @@ fn baking_projects_high_normals_into_the_target_tangent_frame() {
 
 #[test]
 fn compressed_events_replay_through_the_editor_and_saved_viewer() {
-    use gpt_mesh::session::Session;
+    use atk_mesh::session::Session;
     let root = std::env::temp_dir().join(format!("mesh-asset-compression-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
     let mut session = Session::open_with_recording_compression(root.clone(), true).unwrap();

@@ -191,10 +191,10 @@ fn viewer_updates_cover_partial_batches_and_saved_edits() {
 
 #[test]
 fn cli_imports_binary_fbx_and_persists_editable_geometry() {
-    let mut source = gpt_mesh::Document::default();
+    let mut source = atk_mesh::Document::default();
     source.execute(serde_json::json!({"command":"object_create_box","name":"Cargo","min":[2,0,0],"max":[3,1,1],"origin":[2,0,0]})).unwrap();
     let exported = source.execute(serde_json::json!({"command":"export","format":"fbx"})).unwrap();
-    let bytes = gpt_mesh::base64::decode(exported["fbx_base64"].as_str().unwrap()).unwrap();
+    let bytes = atk_mesh::base64::decode(exported["fbx_base64"].as_str().unwrap()).unwrap();
 
     let (server, port) = start_server_at(false, None, false);
     std::fs::write(server.workspace.join("cargo.fbx"), bytes).unwrap();
@@ -394,7 +394,7 @@ fn empty_editor_accepts_first_object_and_persists_last_object_deletion() {
 
     server.child.kill().unwrap();
     server.child.wait().unwrap();
-    let reopened = gpt_mesh::session::Session::open_workspace(server.workspace.clone()).unwrap();
+    let reopened = atk_mesh::session::Session::open_workspace(server.workspace.clone()).unwrap();
     assert_eq!(reopened.state()["mesh"]["objects"], serde_json::json!({}));
     assert_eq!(reopened.state()["mesh"]["object_id_high_watermark"], 2);
 }
@@ -451,7 +451,9 @@ fn timed_out_write_reports_the_id_sent_to_the_server() {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
-    let id = request["cli_request_id"].as_str().unwrap();
+    assert_eq!(request["method"], "tools/call");
+    assert_eq!(request["params"]["name"], "cube");
+    let id = request["params"]["arguments"]["cli_request_id"].as_str().unwrap();
 
     let result = client.join().unwrap();
     assert!(!result.status.success());
@@ -696,7 +698,7 @@ fn project_viewer_reads_current_revisions_from_independent_editors() {
     let first_query = "?workspace=.mesh%2FLeft+%26+Caf%C3%A9";
     let second_query = "?workspace=models%2Fright";
 
-    let source = gpt_mesh::Document::default()
+    let source = atk_mesh::Document::default()
         .execute(serde_json::json!({"command":"save"}))
         .unwrap();
     let first_path = viewer.workspace.join(first);
@@ -862,6 +864,9 @@ fn help_version_and_invalid_options_do_not_need_a_server() {
             vec!["--port", "70000"],
             vec!["--port", "7878", "--port", "7879"],
         ] {
+            if binary == env!("CARGO_BIN_EXE_atk-mesh") && arguments == ["--port", "0"] {
+                continue;
+            }
             let output = Command::new(binary)
                 .args(arguments)
                 .stdin(Stdio::null())

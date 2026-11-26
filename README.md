@@ -1,4 +1,4 @@
-# ATK Mesh
+# atk-mesh
 
 Build, edit, and inspect 3D meshes with an AI agent. Review saved models in a local browser viewer.
 
@@ -39,8 +39,8 @@ Run `atk-mesh` from your project directory and open the viewer URL printed at st
 
 ## Related tools
 
-- [ATK Audio](https://github.com/NathanChambers/atk-audio)
-- [ATK UI](https://github.com/NathanChambers/atk-ui)
+- [atk-audio](https://github.com/NathanChambers/atk-audio)
+- [atk-ui](https://github.com/NathanChambers/atk-ui)
 
 ## License
 

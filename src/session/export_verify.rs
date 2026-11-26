@@ -321,7 +321,7 @@ fn summarize(bytes: &[u8], format: &str) -> Result<Value, String> {
                 }
             }
             Ok(
-                json!({"triangles":triangles,"vertices":triangles*3,"bounds":{"min":minimum,"max":maximum},"bounds_convention":"Y-up meters assuming Workbench Z-up millimeter export",
+                json!({"triangles":triangles,"vertices":triangles*3,"bounds":{"min":minimum,"max":maximum},"bounds_convention":"Y-up meters assuming atk-mesh Z-up millimeter export",
                     "attributes":{"facet_normals":triangles,"uvs":{"status":"format_limitation"}},"pivots":{"status":"format_limitation"},"materials":{"status":"format_limitation"},"geometry_reimport":{"status":"not_run"}}),
             )
         }

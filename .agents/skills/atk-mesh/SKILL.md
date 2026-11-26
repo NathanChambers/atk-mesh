@@ -1,20 +1,21 @@
 ---
 name: atk-mesh
-description: Create, edit, inspect, render, or export 3D meshes in Mesh Workbench. Use for modeling requests in a workbench project, including turning existing artwork into a 3D asset, or when the user names atk-mesh.
+description: Create, edit, inspect, render, or export 3D meshes in atk-mesh. Use for modeling requests in a project, including turning existing artwork into a 3D asset, or when the user names atk-mesh.
 ---
 
 # atk-mesh
 
-When this skill is invoked, use the Mesh Workbench CLI command workflow for the requested work unless the user explicitly specifies another method. For modeling tasks, author the mesh in the target workspace with CLI modeling commands. Scripts may prepare and submit CLI command batches. If the CLI cannot perform a required operation, explain the limitation and ask before switching to external authoring.
+Use `atk-mesh-cli --port EDITOR_PORT` when choosing or switching editors during a task. Use MCP tools already attached to the intended editor when available. Follow an explicit user preference for either transport. If atk-mesh cannot perform a required operation, explain the limitation and ask before switching to external authoring.
 
 ## Select the workspace
 
-- When modeling from an existing design, look for editable source in the consuming project. For ATK Vector, look under `.vector/sessions/` and pass the project and session to `atk-vector-cli`. Use `inspect` for part IDs, `bounds` for proportions, and `contours` for outlines. Map artboard points to the chosen model plane and scale before extrusion. Choose depth and bevel in Mesh Workbench. Open paths and holes need different treatment from solid outer polygons.
+- When modeling from an existing design, look for editable source in the consuming project. For atk-vector, look under `.vector/sessions/` and pass the project and session to `atk-vector-cli`. Use `inspect` for part IDs, `bounds` for proportions, and `contours` for outlines. Map artboard points to the chosen model plane and scale before extrusion. Choose depth and bevel in atk-mesh. Open paths and holes need different treatment from solid outer polygons.
 
-- Verify that `atk-mesh-cli` and `atk-mesh` are on PATH. If missing, use `cargo install --path . --locked` from the Mesh Workbench source checkout when installation is in scope.
+- Verify that `atk-mesh-cli` and `atk-mesh` are on PATH. If missing, use `cargo install --path . --locked` from the atk-mesh source checkout when installation is in scope.
 - Use the workspace and editor port specified by the user or project. If a project viewer is running, list saved workspaces with `atk-mesh-cli --port VIEWER_PORT --list-workspaces`.
 - Reuse a running editor for the intended workspace. Verify its workspace with `atk-mesh-cli --port EDITOR_PORT --list-workspaces` before editing if the port assignment is uncertain.
-- When an editor is needed, run `atk-mesh --workspace PATH --port FREE_PORT` from the consuming project and keep it available for the task. Use a fresh workspace for a new model. If multiple existing workspaces fit the request, resolve the target before editing.
+- When an editor is needed, run `atk-mesh --workspace PATH --port 0` from the consuming project and keep it available for the task. Read the assigned port from the startup output. Use a fresh workspace for a new model. If multiple existing workspaces fit the request, resolve the target before editing.
+- When configuring a stdio MCP host, use `atk-mesh-cli --mcp --port EDITOR_PORT` as its launch command. For an HTTP MCP host, use `http://127.0.0.1:EDITOR_PORT/mcp`. Both target the running editor on that port.
 - Pass the editor port explicitly for command requests. When the user wants a browser view, use the read-only project viewer started with `atk-mesh --project ROOT --port VIEWER_PORT` on a different port.
 
 ## Discover and use commands
@@ -22,7 +23,7 @@ When this skill is invoked, use the Mesh Workbench CLI command workflow for the 
 - For unfamiliar work, send `{"command":"help"}`, then read the relevant topics via `{"command":"help","topic":"workflow"}` or `{"command":"help","topic":"command-api"}`. Follow `next_offset` to read additional pages.
 - Check `workflow_status` before modeling changes and use `query_mesh` to find current object IDs and revision. Use the returned IDs and revision guards for edits that depend on the inspected state.
 - Pass JSON via stdin or `--input FILE`. For example, PowerShell accepts `'{"command":"workflow_status"}' | atk-mesh-cli --port 7879`.
-- Use `--batch --input FILE` for prepared JSON arrays. Split batches where later commands depend on returned IDs, revisions, or review evidence. Earlier edits in a failed batch remain applied.
+- Batch commands with known inputs. Use MCP `batch` with a `commands` array or CLI `--batch --input FILE` with a prepared JSON array. Split batches where later commands depend on returned IDs, revisions, or review evidence. Earlier edits in a failed batch remain applied.
 - Check both the exit status and JSON reply. If a request times out, look up its `cli_request_id` in the workspace session recordings before retrying. If persistence fails, check `recording_error` and `persistence` to see whether the edit changed the model in memory and reached `project.json`.
 
 ## Review and deliver

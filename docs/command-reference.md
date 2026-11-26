@@ -1,4 +1,4 @@
-# Mesh Workbench command reference
+# atk-mesh command reference
 
 A local mesh workspace for iterative AI editing. Rust owns the document; the plain JavaScript browser and JSON CLI use the same command endpoint. No Node build step is needed.
 
@@ -121,7 +121,7 @@ Use `missing_capability`, `command_issue`, `documentation`, or `workflow` as the
 
 `feedback_list` returns reports newest first. Filter by `kind` if needed. Pass the returned `next_before` as `before` with the same filter to read the next page. A null cursor marks the last page. The default limit is 32 and the maximum is 256.
 
-The inbox is shared across workspaces for the current OS user. It defaults to `%LOCALAPPDATA%\MeshWorkbench\feedback` on Windows, `~/Library/Application Support/MeshWorkbench/feedback` on macOS, and `$XDG_DATA_HOME/mesh-workbench/feedback` on Linux, with `~/.local/share/mesh-workbench/feedback` as the Linux fallback. Set `MESH_FEEDBACK_DIR` to an absolute directory path to override the default. The list response includes the resolved path even when empty.
+The inbox is shared across workspaces for the current OS user. It defaults to `%LOCALAPPDATA%\atk-mesh\feedback` on Windows, `~/Library/Application Support/atk-mesh/feedback` on macOS, and `$XDG_DATA_HOME/atk-mesh/feedback` on Linux, with `~/.local/share/atk-mesh/feedback` as the Linux fallback. Existing legacy inboxes are reused when the new inbox does not exist. Set `MESH_FEEDBACK_DIR` to an absolute directory path to override the default. The list response includes the resolved path even when empty.
 
 ## Batch commands
 

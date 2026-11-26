@@ -1,4 +1,4 @@
-use gpt_mesh::{responses, session::Session};
+use atk_mesh::{responses, session::Session};
 use serde_json::{Value, json};
 
 #[test]
@@ -76,7 +76,7 @@ fn artifacts_are_saved_and_recorded_without_payloads_in_default_replies() {
     let full_png = record["full_output"]["result"]["png_base64"]
         .as_str()
         .unwrap();
-    assert_eq!(bytes, gpt_mesh::base64::decode(full_png).unwrap());
+    assert_eq!(bytes, atk_mesh::base64::decode(full_png).unwrap());
     let svg = &capture["result"]["artifacts"]["svg"]["path"];
     assert_eq!(
         std::fs::read_to_string(svg.as_str().unwrap()).unwrap(),

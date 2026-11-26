@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::session::Session;
+use atk_mesh::session::Session;
 use serde_json::{Value, json};
 
 fn send(session: &mut Session, request: Value) -> Value {

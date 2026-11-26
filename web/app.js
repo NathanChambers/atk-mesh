@@ -147,7 +147,7 @@ function saveWorkspaceView() {
     if (snapshot === savedViewerSnapshot) { return; }
 
     try {
-        window.localStorage.setItem(`gpt-mesh:workspace-view:1:${workspace}`, snapshot);
+        window.localStorage.setItem(`atk-mesh:workspace-view:1:${workspace}`, snapshot);
         savedViewerSnapshot = snapshot;
     } catch {
         // Viewing remains available if the browser disables storage or its quota is full.
@@ -157,7 +157,9 @@ function saveWorkspaceView() {
 function restoreWorkspaceView() {
     let state;
     try {
-        state = JSON.parse(window.localStorage.getItem(`gpt-mesh:workspace-view:1:${workspace}`));
+        const saved = window.localStorage.getItem(`atk-mesh:workspace-view:1:${workspace}`)
+            ?? window.localStorage.getItem(`gpt-mesh:workspace-view:1:${workspace}`);
+        state = JSON.parse(saved);
     } catch {
         return;
     }

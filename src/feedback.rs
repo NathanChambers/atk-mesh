@@ -4,6 +4,28 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+struct FeedbackCommand {
+    name: &'static str,
+    description: &'static str,
+    schema: fn() -> Value,
+    execute: fn(&Path, &Value) -> Result<Value, String>,
+}
+
+const COMMANDS: [FeedbackCommand; 2] = [
+    FeedbackCommand {
+        name: "feedback_list",
+        description: "List saved CLI feedback reports, optionally filtered by kind or cursor.",
+        schema: list_schema,
+        execute: list,
+    },
+    FeedbackCommand {
+        name: "feedback_submit",
+        description: "Save a CLI capability, command, documentation or workflow report to the feedback inbox.",
+        schema: submit_schema,
+        execute: submit,
+    },
+];
+
 const KINDS: [&str; 4] = [
     "missing_capability",
     "command_issue",
@@ -11,20 +33,65 @@ const KINDS: [&str; 4] = [
     "workflow",
 ];
 
+const SUBMIT_TEXT_FIELDS: [(&str, usize, bool); 5] = [
+    ("summary", 240, true),
+    ("goal", 2_000, true),
+    ("observed", 8_000, true),
+    ("suggestion", 4_000, false),
+    ("related", 1_000, false),
+];
+
+pub(crate) fn tools() -> impl Iterator<Item = Value> {
+    COMMANDS.iter().map(|command| {
+        crate::command_catalog::tool(command.name, command.description, (command.schema)())
+    })
+}
+
+pub(crate) fn is_name(name: &str) -> bool {
+    command(name).is_some()
+}
+
 pub fn is_command(request: &Value) -> bool {
-    matches!(
-        request["command"].as_str(),
-        Some("feedback_submit" | "feedback_list")
-    )
+    request["command"].as_str().is_some_and(is_name)
 }
 
 pub fn run(request: &Value) -> Result<Value, String> {
     let directory = feedback_directory()?;
-    if request["command"] == "feedback_submit" {
-        submit(&directory, request)
-    } else {
-        list(&directory, request)
+    let name = request["command"].as_str().ok_or("feedback command is required")?;
+    let command = command(name).ok_or("unknown feedback command")?;
+    (command.execute)(&directory, request)
+}
+
+fn command(name: &str) -> Option<&'static FeedbackCommand> {
+    COMMANDS.iter().find(|command| command.name == name)
+}
+
+fn kind_schema() -> Value {
+    json!({"type":"string","enum":KINDS})
+}
+
+fn list_schema() -> Value {
+    json!({
+        "type":"object",
+        "properties":{"before":{"type":"string"},"kind":kind_schema(),"limit":{"type":"integer"}},
+        "additionalProperties":false
+    })
+}
+
+fn submit_schema() -> Value {
+    let mut schema = json!({
+        "type":"object",
+        "properties":{"kind":kind_schema(),"workspace":{"type":"string"}},
+        "required":["kind"],
+        "additionalProperties":false
+    });
+    for (field, _, required) in SUBMIT_TEXT_FIELDS {
+        schema["properties"][field] = json!({"type":"string"});
+        if required {
+            schema["required"].as_array_mut().unwrap().push(json!(field));
+        }
     }
+    schema
 }
 
 fn feedback_directory() -> Result<PathBuf, String> {
@@ -37,18 +104,25 @@ fn feedback_directory() -> Result<PathBuf, String> {
     }
 
     #[cfg(target_os = "windows")]
-    let directory = environment_directory("LOCALAPPDATA").map(|path| path.join("MeshWorkbench"));
+    let root = environment_directory("LOCALAPPDATA");
     #[cfg(target_os = "macos")]
-    let directory = environment_directory("HOME")
-        .map(|path| path.join("Library/Application Support/MeshWorkbench"));
+    let root = environment_directory("HOME").map(|path| path.join("Library/Application Support"));
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let directory = environment_directory("XDG_DATA_HOME")
-        .or_else(|| environment_directory("HOME").map(|path| path.join(".local/share")))
-        .map(|path| path.join("mesh-workbench"));
+    let root = environment_directory("XDG_DATA_HOME")
+        .or_else(|| environment_directory("HOME").map(|path| path.join(".local/share")));
 
-    directory
-        .map(|path| path.join("feedback"))
-        .ok_or_else(|| "could not resolve the feedback directory; set MESH_FEEDBACK_DIR to an absolute directory path".into())
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let legacy_name = "MeshWorkbench";
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let legacy_name = "mesh-workbench";
+
+    let root = root.ok_or("could not resolve the feedback directory; set MESH_FEEDBACK_DIR to an absolute directory path")?;
+    let directory = root.join("atk-mesh").join("feedback");
+    let legacy_directory = root.join(legacy_name).join("feedback");
+    if !directory.exists() && legacy_directory.is_dir() {
+        return Ok(legacy_directory);
+    }
+    Ok(directory)
 }
 
 fn environment_directory(name: &str) -> Option<PathBuf> {
@@ -65,13 +139,7 @@ fn submit(directory: &Path, request: &Value) -> Result<Value, String> {
         if !path.is_dir() { return Err("workspace must be a directory".into()); }
         report["workspace"] = json!(path);
     }
-    for (field, maximum, required) in [
-        ("summary", 240, true),
-        ("goal", 2_000, true),
-        ("observed", 8_000, true),
-        ("suggestion", 4_000, false),
-        ("related", 1_000, false),
-    ] {
+    for (field, maximum, required) in SUBMIT_TEXT_FIELDS {
         let Some(value) = request.get(field) else {
             if required {
                 return Err(format!("{field} is required"));

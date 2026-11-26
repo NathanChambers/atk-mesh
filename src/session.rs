@@ -1066,7 +1066,7 @@ impl Session {
             .is_some_and(|v| v != "compact" && v != "full")
         {
             Err("response must be compact or full".into())
-        } else if request["command"] == "help" {
+        } else if request["command"] == crate::help::COMMAND {
             crate::help::execute(&request)
         } else if request["command"] == "workflow_report" {
             self.workflow_markdown()
@@ -1199,7 +1199,7 @@ impl Session {
                 || command == "query_texture_faces"
                 || command == "query_vertex_colors"
                 || command == "inspect_uv"
-                || command == "help"
+                || command == crate::help::COMMAND
                 || command == "query_mesh"
                 || command == "query_components"
                 || command == "query_constructions"

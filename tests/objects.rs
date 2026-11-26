@@ -1,4 +1,4 @@
-use gpt_mesh::Document;
+use atk_mesh::Document;
 use serde_json::{Value, json};
 
 fn create_gate(document: &mut Document) -> Value {
@@ -263,7 +263,7 @@ fn legacy_projects_gain_an_object_and_invalid_ownership_is_rejected() {
     let export = document
         .execute(json!({"command":"export","format":"fbx"}))
         .unwrap();
-    let bytes = gpt_mesh::base64::decode(export["fbx_base64"].as_str().unwrap()).unwrap();
+    let bytes = atk_mesh::base64::decode(export["fbx_base64"].as_str().unwrap()).unwrap();
     assert!(bytes.starts_with(b"Kaydara FBX Binary  \0\x1a\0"));
     assert_eq!(export["version"], 7400);
 }

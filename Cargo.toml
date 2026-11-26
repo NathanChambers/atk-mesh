@@ -1,5 +1,5 @@
 [package]
-name = "gpt-mesh"
+name = "atk-mesh"
 version = "0.1.0"
 edition = "2024"
 description = "Local mesh editing server, JSON command-line client, and browser viewer"

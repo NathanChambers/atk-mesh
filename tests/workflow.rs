@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::session::Session;
+use atk_mesh::session::Session;
 use serde_json::{Value, json};
 
 fn root(name: &str) -> std::path::PathBuf {
@@ -27,11 +27,11 @@ fn measured_intent_survives_reopen_and_blocks_on_the_named_metric() {
 
 #[test]
 fn projected_face_regions_survive_reload_and_track_later_uv_edits() {
-    let mut doc=gpt_mesh::Document::default();
+    let mut doc=atk_mesh::Document::default();
     doc.execute(json!({"command":"uv_project","object":1,"mode":"box","region":[0.1,0.1,0.4,0.4]})).unwrap();
     doc.execute(json!({"command":"uv_transform","faces":[1],"offset":[0.45,0]})).unwrap();
     let saved=doc.execute(json!({"command":"save"})).unwrap();
-    let mut loaded=gpt_mesh::Document::default();
+    let mut loaded=atk_mesh::Document::default();
     loaded.execute(json!({"command":"load","project":saved})).unwrap();
     let report=loaded.execute(json!({"command":"inspect"})).unwrap();
     let outside=report["source_metrics"]["region_violations"].as_array().unwrap();
@@ -459,7 +459,7 @@ fn corrupt_workflow_is_not_silently_reset() {
 
 #[test]
 fn taper_preserves_ids_and_rejects_invalid_profiles_atomically() {
-    let mut document = gpt_mesh::Document::default();
+    let mut document = atk_mesh::Document::default();
     document
         .execute(json!({"command":"select_object","object":1}))
         .unwrap();

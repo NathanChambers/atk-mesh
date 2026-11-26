@@ -411,7 +411,7 @@ pub(super) fn export(mesh: &Mesh, visibility: &crate::render::CaptureVisibility,
         return Err("no visible faces to export".into());
     }
     let mut document = json!({
-        "asset":{"version":"2.0","generator":"gpt-mesh"},"scene":0,"scenes":[{"nodes":scene_nodes}],
+        "asset":{"version":"2.0","generator":"atk-mesh"},"scene":0,"scenes":[{"nodes":scene_nodes}],
         "nodes":nodes,"meshes":meshes,
         "accessors":buffer.accessors,"bufferViews":buffer.views,"buffers":[{"byteLength":buffer.bytes.len()}]
     });

@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::{Document, session::Session};
+use atk_mesh::{Document, session::Session};
 use serde_json::json;
 
 #[test]

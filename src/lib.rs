@@ -9,6 +9,7 @@ mod appearance_tools;
 pub mod base64;
 mod camera_fit;
 mod cleanup;
+pub mod command_catalog;
 mod collections;
 mod comparison;
 mod connected;

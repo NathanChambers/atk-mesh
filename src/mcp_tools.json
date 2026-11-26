@@ -1,0 +1,4587 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "animation_ik_bake",
+        "description": "Bake a three-bone IK chain to keys over a clip interval.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "chain": {
+              "type": "array",
+              "items": {}
+            },
+            "end": {
+              "type": "number"
+            },
+            "fps": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pole": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "start": {
+              "type": "number"
+            },
+            "target": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "tip_rotation": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "name",
+            "chain",
+            "target",
+            "pole",
+            "start",
+            "end"
+          ]
+        }
+      },
+      {
+        "name": "animation_keys_edit",
+        "description": "Set, remove or retime keys in a named animation clip atomically.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edits": {
+              "type": "array",
+              "items": {}
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "edits"
+          ]
+        }
+      },
+      {
+        "name": "animation_remove",
+        "description": "Delete a named animation clip.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "animation_sample",
+        "description": "Animation sample. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bones": {
+              "type": "array",
+              "items": {}
+            },
+            "clip": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "time": {
+              "type": "number"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "clip",
+            "time"
+          ]
+        }
+      },
+      {
+        "name": "animation_set",
+        "description": "Animation set. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "clip": {
+              "type": "object"
+            },
+            "name": {
+              "type": "string"
+            },
+            "shared_curve": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "name",
+            "clip"
+          ]
+        }
+      },
+      {
+        "name": "animation_track_remove",
+        "description": "Remove a bone track from a named animation clip.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bone": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "bone"
+          ]
+        }
+      },
+      {
+        "name": "animation_track_set",
+        "description": "Add or replace a bone track or update its interpolation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bone": {
+              "type": "string"
+            },
+            "interpolation": {
+              "type": "string"
+            },
+            "keys": {
+              "type": "array",
+              "items": {}
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "bone"
+          ]
+        }
+      },
+      {
+        "name": "animation_update",
+        "description": "Update a named clip's duration or looping flag.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "duration": {
+              "type": "number"
+            },
+            "looping": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "bake_surface_map",
+        "description": "Bake a surface map by tracing from a target object to a source object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "max_distance": {
+              "type": "number"
+            },
+            "source": {
+              "type": "integer"
+            },
+            "target": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "source",
+            "target",
+            "channel",
+            "max_distance"
+          ]
+        }
+      },
+      {
+        "name": "batch",
+        "description": "Execute 1 to 1024 editor requests in order. Stops on the first failure and retains earlier successful edits.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commands": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1024,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          },
+          "required": [
+            "commands"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "bevel_edges",
+        "description": "object, edges:[[a,b],...], positive width, segments:1..32. Use corner_mode:\"isolated\" for vertex-disjoint convex manifold edges with three incident faces at each endpoint.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "corner_mode": {
+              "type": "string"
+            },
+            "edges": {
+              "type": "array",
+              "items": {}
+            },
+            "object": {
+              "type": "integer"
+            },
+            "segments": {
+              "type": "integer"
+            },
+            "width": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "edges",
+            "width"
+          ]
+        }
+      },
+      {
+        "name": "bevel_vertex",
+        "description": "vertex, optional fraction (default 0.1) Truncate a closed convex vertex fan with a plane, replacing the point with a cap",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fraction": {
+              "type": "number"
+            },
+            "vertex": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "vertex"
+          ]
+        }
+      },
+      {
+        "name": "bisect_plane",
+        "description": "object, normal, offset or offsets:[...] (up to 32): split convex planar faces at dot(unit(normal),position)=offset, retaining both sides. Intersection vertices are shared; the last cut is selected.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "normal": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "offsets": {
+              "type": "array",
+              "items": {}
+            },
+            "snap_tolerance": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "object",
+            "normal"
+          ]
+        }
+      },
+      {
+        "name": "bridge_faces",
+        "description": "faces: [a,b], optional offset Remove two end caps and join their equal-size boundary loops with quads",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "offset": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "faces"
+          ]
+        }
+      },
+      {
+        "name": "bridge_loops",
+        "description": "object, loops:[[vertex IDs],[vertex IDs]], optional offset. Both closed boundaries must be disjoint and equally sized.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "loops": {},
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "capture",
+        "description": "Render the current scene with camera, visibility and diagnostic mode controls.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "clean": {
+              "type": "boolean"
+            },
+            "clip": {
+              "type": "string"
+            },
+            "depth_range": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "fov": {
+              "type": "number"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "hide_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "hide_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "mode": {
+              "type": "string"
+            },
+            "near": {},
+            "pitch": {
+              "type": "number"
+            },
+            "position": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "projection": {
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "solo_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "solo_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "target": {},
+            "time": {},
+            "width": {
+              "type": "integer"
+            },
+            "yaw": {
+              "type": "number"
+            },
+            "zoom": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      {
+        "name": "capture_uv",
+        "description": "Explicit face/vertex corner values and scope Direct UV editing and validation; read help topic uv-editing-and-vertex-painting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "texture": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "collection_create",
+        "description": "Collection create. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "collection_delete",
+        "description": "Collection delete. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {}
+          },
+          "required": [
+            "collection"
+          ]
+        }
+      },
+      {
+        "name": "collection_update",
+        "description": "Change a named collection or its object membership.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {},
+            "name": {
+              "type": "string"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "collection"
+          ]
+        }
+      },
+      {
+        "name": "compare_reference",
+        "description": "Add layout:\"overlay\" for the cropped source with cyan mesh silhouette/projected contours, magenta reference contours/markers, and yellow residual lines. Default remains side-by-side.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "camera": {
+              "type": "object"
+            },
+            "crop": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "height": {
+              "type": "integer"
+            },
+            "hide_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "hide_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "layout": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "pitch": {
+              "type": "number"
+            },
+            "reference": {},
+            "solo_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "solo_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "width": {
+              "type": "integer"
+            },
+            "yaw": {
+              "type": "number"
+            },
+            "zoom": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "reference"
+          ]
+        }
+      },
+      {
+        "name": "construction_apply",
+        "description": "Construction apply. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "parameters": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "construction_define",
+        "description": "Construction define. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "parameters": {
+              "type": "object"
+            },
+            "steps": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "name",
+            "parameters",
+            "steps"
+          ]
+        }
+      },
+      {
+        "name": "create_face",
+        "description": "object, ordered vertices:[...]. Fills one existing planar, simple closed boundary, including concave boundaries.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "object",
+            "vertices"
+          ]
+        }
+      },
+      {
+        "name": "cube",
+        "description": "Reset the mesh to the default cube. The edit is undoable.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "delete_faces",
+        "description": "Delete faces. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "remove_orphan_vertices": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      {
+        "name": "dissolve_edges",
+        "description": "object, edges:[[a,b],...]. Dissolves the requested internal two-face edges sequentially.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edges": {},
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "dissolve_region",
+        "description": "object, faces:[...] or region. Combines a connected, consistently wound planar patch with one boundary and no holes into an n-gon, retaining the lowest face ID and boundary vertices.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "region": {}
+          }
+        }
+      },
+      {
+        "name": "export",
+        "description": "Export the scene as OBJ, GLB, FBX or STL after workflow checks.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string",
+              "enum": [
+                "obj",
+                "glb",
+                "fbx",
+                "stl"
+              ]
+            },
+            "hide_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "hide_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "merge": {
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "solo_collections": {
+              "type": "array",
+              "items": {}
+            },
+            "solo_objects": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "export_verify",
+        "description": "Verify a workspace-local export file and return a verification receipt.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseline": {
+              "type": "string"
+            },
+            "export": {
+              "type": "object"
+            },
+            "format": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "extrude",
+        "description": "face or faces:[ids], plus value: [x,y,z] or signed nonzero distance Displace the cap and select its new vertices. Distance follows the unit normal implied by the face winding.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "distance": {
+              "type": "number"
+            },
+            "face": {
+              "type": "integer"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      },
+      {
+        "name": "extrude_polygon",
+        "description": "name (or destination object), points:[[u,v],...], positive depth, optional axis, center, origin, bevel, bevel_segments (1–16, default 3), holes. Require 0 <= bevel < depth/2 (strict upper bound; default 0).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "bevel": {
+              "type": "number"
+            },
+            "bevel_segments": {
+              "type": "integer"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "depth": {
+              "type": "number"
+            },
+            "holes": {
+              "type": "array",
+              "items": {}
+            },
+            "mode": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "origin": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "points": {
+              "type": "array",
+              "items": {}
+            },
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "points",
+            "depth"
+          ]
+        }
+      },
+      {
+        "name": "fit_reference",
+        "description": "reference, optional names:[calibration_landmarks], optional camera overrides. Orthographic: fits uniform scale/framing with at least two separated anchors.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bounds": {
+              "type": "object"
+            },
+            "fit_parameters": {
+              "type": "array",
+              "items": {}
+            },
+            "names": {
+              "type": "array",
+              "items": {}
+            },
+            "pitch": {
+              "type": "number"
+            },
+            "reference": {},
+            "yaw": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "reference"
+          ]
+        }
+      },
+      {
+        "name": "import_fbx",
+        "description": "path inside the active model workspace Append static binary or ASCII FBX polygon geometry as editable objects, undoable; preserves existing geometry and IDs",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "import_glb",
+        "description": "path inside the active model workspace Append static GLB 2.0 triangle geometry as editable objects, undoable; preserves existing geometry and IDs",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "improve_triangulation",
+        "description": "Improve triangulation. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "feature_angle": {},
+            "max_deviation": {},
+            "min_angle_gain": {},
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "inset",
+        "description": "face, distance Offset a convex planar face's edges inward by a distance, creating a border ring",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "distance": {
+              "type": "number"
+            },
+            "face": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "face",
+            "distance"
+          ]
+        }
+      },
+      {
+        "name": "inset_region",
+        "description": "Add a coplanar support ring inside a selected region.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "distance": {
+              "type": "number"
+            },
+            "face": {
+              "type": "integer"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "distance"
+          ]
+        }
+      },
+      {
+        "name": "inspect",
+        "description": "Summarize mesh geometry, selection, validation and edit history.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "inspect_defects",
+        "description": "Inspect defects. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "max_pairs": {},
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "tolerance": {}
+          }
+        }
+      },
+      {
+        "name": "inspect_loop",
+        "description": "Trace a regular closed quad edge loop.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edge": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "edge"
+          ]
+        }
+      },
+      {
+        "name": "inspect_patch",
+        "description": "Read ordered perimeter IDs and positions for a connected mesh patch.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "face": {
+              "type": "integer"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "region": {
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "revision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object"
+          ]
+        }
+      },
+      {
+        "name": "inspect_profile",
+        "description": "Read points and measurements for an ordered source chain.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "source_object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "source_object",
+            "vertices"
+          ]
+        }
+      },
+      {
+        "name": "inspect_region",
+        "description": "faces: [id,...] and/or vertices: [id,...], optional object, response:\"full\" Read-only local positions, face loops, neighbors, adjacency, bounds, boundary edges and disconnected-component count. Default collections may be summarized; full returns exact region data.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {},
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "inspect_shading",
+        "description": "face, faces, or object; optional coplanar:true grows one seed face across connected, consistently oriented coplanar neighbors. Reports per-face planarity, shading-normal deviation and triangle quality, with offending face/vertex IDs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "coplanar": {
+              "type": "boolean"
+            },
+            "face": {
+              "type": "integer"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "normal_threshold": {
+              "type": "number"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "quality_threshold": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      {
+        "name": "inspect_uv",
+        "description": "Explicit face/vertex corner values and scope Direct UV editing and validation; read help topic uv-editing-and-vertex-painting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "inspect_volume",
+        "description": "Inspect volume. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "max": {},
+            "min": {},
+            "objects": {}
+          }
+        }
+      },
+      {
+        "name": "intersection_allow",
+        "description": "Intersection allow. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "reason": {
+              "type": "string"
+            },
+            "regions": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        }
+      },
+      {
+        "name": "list_workspaces",
+        "description": "List saved mesh workspaces visible to the configured editor or project viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "load",
+        "description": "Replace the current mesh with a native project object, version 1 through 9.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9
+                },
+                "mesh": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "version",
+                "mesh"
+              ]
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      {
+        "name": "loft",
+        "description": "Join ordered cross sections into a mesh surface.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "cap_end": {
+              "type": "boolean"
+            },
+            "cap_start": {
+              "type": "boolean"
+            },
+            "closed": {},
+            "contours": {
+              "type": "array",
+              "items": {}
+            },
+            "interpolation": {},
+            "loops": {
+              "type": "array",
+              "items": {}
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "measure_clearance",
+        "description": "Measure clearance. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "object"
+            },
+            "b": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "move",
+        "description": "Translate selected vertices by an XYZ offset.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "move_in_reference",
+        "description": "reference, required revision and alignment_version from project_reference. landmark:\"name\" moves its bound vertices rigidly to the target; optional delta_pixels requests a partial/custom move.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "alignment_version": {
+              "type": "integer"
+            },
+            "delta_pixels": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "landmark": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "reference": {},
+            "revision": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "reference",
+            "revision",
+            "alignment_version"
+          ]
+        }
+      },
+      {
+        "name": "move_in_view",
+        "description": "Current selection or explicit vertices, delta_pixels:[dx,dy], view_id or explicit camera:{yaw,pitch,zoom,center,width,height}. Deltas use actual capture pixels.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "camera": {
+              "type": "object"
+            },
+            "collection": {},
+            "delta_pixels": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "view_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "delta_pixels"
+          ]
+        }
+      },
+      {
+        "name": "move_vertices",
+        "description": "object, offsets:[{vertex,delta:[x,y,z]},...] Apply distinct vertex offsets in one edit. See local-sculpting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "offsets": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "object",
+            "offsets"
+          ]
+        }
+      },
+      {
+        "name": "object_add_box",
+        "description": "Add box geometry to an existing object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object",
+            "min",
+            "max"
+          ]
+        }
+      },
+      {
+        "name": "object_create_box",
+        "description": "Create a separate box object from its bounds.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "name": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "name",
+            "min",
+            "max"
+          ]
+        }
+      },
+      {
+        "name": "object_delete",
+        "description": "Delete an object and its geometry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object"
+          ]
+        }
+      },
+      {
+        "name": "object_delete_components",
+        "description": "Object delete components. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "expected_vertices": {},
+            "object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "object_duplicate",
+        "description": "Source object, unique destination name, optional translation value:[x,y,z]. Independent copy preserving face winding, smoothing and flat-face overrides; translates the source pivot with the geometry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "object",
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "object_instance",
+        "description": "Master object, unique name, optional translation value:[x,y,z] Create a linked copy; master shape, topology and shading edits propagate",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "array": {
+              "type": "object"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "value": {}
+          }
+        }
+      },
+      {
+        "name": "object_join",
+        "description": "Object join. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "objects": {},
+            "target": {}
+          }
+        }
+      },
+      {
+        "name": "object_link_instance",
+        "description": "Convert existing geometry into a linked copy of an independent master.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "master": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "rotation": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "vertex_map": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "object",
+            "master"
+          ]
+        }
+      },
+      {
+        "name": "object_make_unique",
+        "description": "object Detach a copy, preserving its placement, pivot, geometry IDs and collections",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object"
+          ]
+        }
+      },
+      {
+        "name": "object_move",
+        "description": "object, value: [x,y,z] or align Translate the object's vertices and origin together",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "align": {
+              "type": "object"
+            },
+            "collection": {},
+            "object": {
+              "type": "integer"
+            },
+            "value": {}
+          }
+        }
+      },
+      {
+        "name": "object_profile",
+        "description": "Generate a profile object along an ordered source chain.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "depth": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "source_object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "width": {
+              "type": "number"
+            },
+            "z": {}
+          },
+          "required": [
+            "source_object",
+            "vertices",
+            "offset",
+            "width",
+            "depth"
+          ]
+        }
+      },
+      {
+        "name": "object_rename",
+        "description": "object, name Set a unique object name",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object",
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "object_review_check",
+        "description": "object, check, outcome, reason, optional evidence Record a review result against the object’s checklist",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "check": {
+              "type": "string"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {}
+            },
+            "object": {
+              "type": "integer"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "object",
+            "check",
+            "outcome",
+            "reason"
+          ]
+        }
+      },
+      {
+        "name": "object_review_plan",
+        "description": "object, checks Replace the object’s checklist and reopen its review",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "checks": {
+              "type": "array",
+              "items": {}
+            },
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object",
+            "checks"
+          ]
+        }
+      },
+      {
+        "name": "object_rotate",
+        "description": "object, value: [x,y,z], optional pivot:[x,y,z] or pivot:\"bounds_center\" Rotate all object vertices in incremental degrees, X then Y then Z. Defaults to its origin.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "pivot": {},
+            "value": {}
+          }
+        }
+      },
+      {
+        "name": "object_scale",
+        "description": "Object scale. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "value": {}
+          }
+        }
+      },
+      {
+        "name": "object_separate_faces",
+        "description": "Object separate faces. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "parts": {}
+          }
+        }
+      },
+      {
+        "name": "object_set_origin",
+        "description": "object, origin: [x,y,z] Set pivot without moving vertices",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "origin": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "object",
+            "origin"
+          ]
+        }
+      },
+      {
+        "name": "object_set_stage",
+        "description": "object, stage, optional note Record progress. Production ready requires a completed object review and a note",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "note": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "stage": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "object",
+            "stage"
+          ]
+        }
+      },
+      {
+        "name": "project_reference",
+        "description": "Read saved view: projected points, target-to-mesh deltas, RMS/max errors in original-image pixels. Optional names, offset, limit 1..64 (default 16).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "alignment_version": {
+              "type": "integer"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "names": {
+              "type": "array",
+              "items": {}
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "reference": {},
+            "revision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "reference"
+          ]
+        }
+      },
+      {
+        "name": "quad_strip",
+        "description": "Connect ordered contours with a strip of quad faces.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "closed": {},
+            "contours": {
+              "type": "array",
+              "items": {}
+            },
+            "interpolation": {},
+            "loops": {
+              "type": "array",
+              "items": {}
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_animation",
+        "description": "Page through clips, tracks or a track's exact keyframes.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bone": {
+              "type": "string"
+            },
+            "clip": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_boundaries",
+        "description": "object, optional pagination. Returns ordered closed boundary loops and branching vertices.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_components",
+        "description": "Query components. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "report": {
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "selection": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_constructions",
+        "description": "Page through saved parameterized construction definitions.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "query_instance",
+        "description": "Instance object, kind:\"vertices\" or \"faces\", optional ids, offset, limit Paginated master-ID to instance-ID mapping; ids filters by instance IDs",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_mesh",
+        "description": "Page through current vertices, faces, objects or selection.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {},
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      {
+        "name": "query_object_review",
+        "description": "object Read the checklist, recorded outcomes and stage",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object"
+          ]
+        }
+      },
+      {
+        "name": "query_record",
+        "description": "Read a paginated field from a recorded result.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "integer"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session",
+            "event",
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "query_reviews",
+        "description": "Page through saved review presets.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "query_rig",
+        "description": "List bones, skin weight counts and animation clips.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "query_texture_faces",
+        "description": "Preview the face scope with optional object, faces or region, filter, offset and limit. Add seed_face and expand:\"connected\" to follow shared edges, or expand:\"uv_island\" to follow only edges with matching UVs at both corners.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "filter": {},
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "region": {}
+          }
+        }
+      },
+      {
+        "name": "query_texture_layers",
+        "description": "texture, optional revision, offset, limit (1–256, default 32). Exact layer metadata and masks, image dimensions without pixel payloads, channel names and height-to-normal settings.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "texture": {}
+          }
+        }
+      },
+      {
+        "name": "query_texture_masks",
+        "description": "texture, optional revision, offset, limit. Exact paged definitions in name order, including references, filters and transform.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "texture": {}
+          }
+        }
+      },
+      {
+        "name": "query_uv",
+        "description": "Explicit face/vertex corner values and scope Direct UV editing and validation; read help topic uv-editing-and-vertex-painting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "query_vertex_colors",
+        "description": "Vertex IDs and normalized RGB Direct vertex painting, exact queries and capture with mode:\"vertex_colors\"",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "radial_offset",
+        "description": "Offset selected vertices radially while preserving their positions along the axis.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "distance": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "axis",
+            "distance"
+          ]
+        }
+      },
+      {
+        "name": "radial_profile",
+        "description": "axis, optional center, profile:[[axial_position,radial_offset],...]: linearly interpolated radial displacement on the current selection. Samples must increase in axial position relative to center; outside their span geometry is unchanged.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "center": {},
+            "profile": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "redo",
+        "description": "Reapply the last undone document snapshot.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "reference_guides",
+        "description": "Convert image-space traces to camera rays and emit an SVG or JSON artifact. Optional world-to-pixel anchors fit a camera.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "anchors": {
+              "type": "array",
+              "items": {}
+            },
+            "camera": {
+              "type": "object"
+            },
+            "guides": {
+              "type": "array",
+              "items": {}
+            },
+            "output_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "camera",
+            "guides",
+            "output_path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "reference_landmarks",
+        "description": "reference, landmarks:[{name,pixel:[x,y],vertices:[ids],object?},...], optional contours:[{landmarks:[names],closed:true}]. A binding with only object uses its vertex centroid.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contours": {
+              "type": "array",
+              "items": {}
+            },
+            "kind": {
+              "type": "string"
+            },
+            "landmarks": {
+              "type": "array",
+              "items": {}
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "reference": {}
+          },
+          "required": [
+            "reference"
+          ]
+        }
+      },
+      {
+        "name": "reference_view",
+        "description": "Save camera and crop settings for a registered reference.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "camera": {
+              "type": "object"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "crop": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "fov": {
+              "type": "number"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "pitch": {
+              "type": "number"
+            },
+            "position": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "projection": {
+              "type": "string"
+            },
+            "reference": {},
+            "view": {
+              "type": "object"
+            },
+            "width": {
+              "type": "integer"
+            },
+            "yaw": {
+              "type": "number"
+            },
+            "zoom": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "reference"
+          ]
+        }
+      },
+      {
+        "name": "regenerate_component",
+        "description": "object, region, optional overrides containing generator arguments. Re-evaluates the saved recipe from current source geometry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "overrides": {
+              "type": "object"
+            },
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "object",
+            "region"
+          ]
+        }
+      },
+      {
+        "name": "region_define",
+        "description": "Save a named set of mesh faces.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "faces"
+          ]
+        }
+      },
+      {
+        "name": "region_remove",
+        "description": "Remove a named saved region.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "relax_surface",
+        "description": "Relax surface. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "factor": {},
+            "feature_angle": {},
+            "iterations": {},
+            "max_displacement": {},
+            "objects": {},
+            "silhouette_views": {}
+          }
+        }
+      },
+      {
+        "name": "replace_patch",
+        "description": "Replace a connected patch while preserving its ordered perimeter.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "boundary": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "face": {
+              "type": "integer"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "grid_corners": {
+              "type": "array",
+              "items": {}
+            },
+            "interior": {
+              "type": "array",
+              "items": {}
+            },
+            "object": {
+              "type": "integer"
+            },
+            "polygons": {
+              "type": "array",
+              "items": {}
+            },
+            "region": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object",
+            "boundary"
+          ]
+        }
+      },
+      {
+        "name": "replay",
+        "description": "Read a local CLI recording and optionally select a zero-based frame.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "frame": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "retriangulate_region",
+        "description": "Same region selection; requires one consistently wound planar patch with one simple boundary. Triangulates polygons and flips internal diagonals when the minimum quality of the two affected triangles improves.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "coplanar": {
+              "type": "boolean"
+            },
+            "face": {},
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "review_define",
+        "description": "Review define. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "clearances": {},
+            "crop": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "defects": {
+              "type": "boolean"
+            },
+            "dimensions": {},
+            "export": {
+              "type": "object"
+            },
+            "name": {
+              "type": "string"
+            },
+            "protected_volumes": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "reference": {
+              "type": "string"
+            },
+            "standard_views": {
+              "type": "boolean"
+            },
+            "tessellation": {
+              "type": "boolean"
+            },
+            "view": {
+              "type": "object"
+            },
+            "visibility": {
+              "type": "object"
+            },
+            "wireframe": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "review_run",
+        "description": "Review run. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "review_update",
+        "description": "Update a named saved review preset.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "clearances": {
+              "type": "array",
+              "items": {}
+            },
+            "crop": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "defects": {},
+            "dimensions": {
+              "type": "array",
+              "items": {}
+            },
+            "export": {
+              "type": "object"
+            },
+            "name": {
+              "type": "string"
+            },
+            "protected_volumes": {
+              "type": "array",
+              "items": {}
+            },
+            "reference": {},
+            "standard_views": {
+              "type": "boolean"
+            },
+            "tessellation": {
+              "type": "boolean"
+            },
+            "view": {
+              "type": "object"
+            },
+            "visibility": {
+              "type": "object"
+            },
+            "wireframe": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "revolve",
+        "description": "name (or destination object), profile, segments (8–512), optional axis (X/Y/Z, default Y), center, origin, start (degrees), sweep (greater than 0, at most 360), closed_profile. Creates shared rings, welded poles and a welded full-sweep seam.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {},
+            "center": {},
+            "closed_profile": {},
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "origin": {},
+            "profile": {},
+            "segments": {},
+            "start": {},
+            "sweep": {}
+          }
+        }
+      },
+      {
+        "name": "rig_clear",
+        "description": "Remove the rig, skin weights and animation clips.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "rig_display_tails_set",
+        "description": "Rig display tails set. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "tails": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "rig_rotation_limits_set",
+        "description": "Rig rotation limits set. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limits": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "rig_set",
+        "description": "Rig set. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "rig": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "rig"
+          ]
+        }
+      },
+      {
+        "name": "rotate",
+        "description": "Rotate selected vertices about their centroid in XYZ degrees.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "save",
+        "description": "Return the current native mesh project as an artifact or full JSON.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "response": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "full"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "scale",
+        "description": "Scale selected vertices about their centroid.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "sculpt_stroke",
+        "description": "object, mode, radius, strength, samples:[{face,barycentric},...], optional max_displacement, direction:[x,y,z], continuous:true Raise or lower a connected neighborhood on a triangulated surface. See local-sculpting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "continuous": {},
+            "direction": {},
+            "max_displacement": {},
+            "mode": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "radius": {},
+            "samples": {},
+            "strength": {}
+          }
+        }
+      },
+      {
+        "name": "select",
+        "description": "Replace the current selection with vertex IDs or a collection.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {},
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "select_box",
+        "description": "Select vertices within inclusive XYZ bounds.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "replace",
+                "add",
+                "subtract",
+                "intersect"
+              ]
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ]
+        }
+      },
+      {
+        "name": "select_collection",
+        "description": "Select collection. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "collection": {}
+          },
+          "required": [
+            "collection"
+          ]
+        }
+      },
+      {
+        "name": "select_image",
+        "description": "Select vertices in a rectangle in capture pixel coordinates.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "rect": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "through": {
+              "type": "boolean"
+            },
+            "view_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "view_id",
+            "rect"
+          ]
+        }
+      },
+      {
+        "name": "select_loop",
+        "description": "Trace a regular closed quad edge loop and select its vertices.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edge": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "edge"
+          ]
+        }
+      },
+      {
+        "name": "select_object",
+        "description": "object Select all vertices owned by this object",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "object"
+          ]
+        }
+      },
+      {
+        "name": "select_region",
+        "description": "Select vertices that belong to a saved mesh region.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "region"
+          ]
+        }
+      },
+      {
+        "name": "select_related",
+        "description": "Select topology or mirrored geometry related to a seed.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "edge": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "face": {
+              "type": "integer"
+            },
+            "index": {
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "plane": {
+              "type": "number"
+            },
+            "rings": {
+              "type": "integer"
+            },
+            "tolerance": {
+              "type": "number"
+            },
+            "vertex": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      {
+        "name": "shade_region",
+        "description": "Same region selection; mode:\"flat\" overrides selected face corners with geometric normals, mode:\"smooth\" removes that override and resumes object shading. Other faces retain their existing shading.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "coplanar": {
+              "type": "boolean"
+            },
+            "face": {},
+            "mode": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "shade_smooth",
+        "description": "object, angle (0–180 degrees, default 60): crease-controlled, angle-weighted corner normals in CPU captures, WebGL and native FBX. Zero restores flat normals.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "angle": {},
+            "collection": {},
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "skin_weights_set",
+        "description": "Skin weights set. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bone": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "ramp": {
+              "type": "object"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "weights": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "solid_boolean",
+        "description": "base, tools:[...] (1–64 distinct object IDs), and operation of union, difference, or intersection. Combines closed, outward-wound solids in tool order and reports the volume in cubic mesh units.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "base": {
+              "type": "integer"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "union",
+                "difference",
+                "intersection"
+              ]
+            },
+            "region": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "base",
+            "tools",
+            "operation"
+          ]
+        }
+      },
+      {
+        "name": "split_edge",
+        "description": "edge: [a,b], optional fraction (default 0.5) Insert a vertex into every face sharing the edge; select new vertex",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edge": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "fraction": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "edge"
+          ]
+        }
+      },
+      {
+        "name": "split_face",
+        "description": "face, vertices: [a,b] Split a convex planar polygon with a diagonal between non-adjacent vertices",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "face": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "face",
+            "vertices"
+          ]
+        }
+      },
+      {
+        "name": "split_vertices",
+        "description": "faces: [id,...], optional vertices Duplicate shared vertices for these faces, separating them from other faces",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "required": [
+            "faces"
+          ]
+        }
+      },
+      {
+        "name": "stretch_band",
+        "description": "Stretch band. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "delta": {},
+            "objects": {},
+            "rigid_groups": {},
+            "span": {}
+          }
+        }
+      },
+      {
+        "name": "subdivision_surface",
+        "description": "Evaluate a Catmull-Clark surface from a source object and optional crease edges.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "creases": {
+              "type": "array",
+              "items": {}
+            },
+            "levels": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "source": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "source"
+          ]
+        }
+      },
+      {
+        "name": "sweep",
+        "description": "name or destination object, simple closed profile:[[u,v],...], path:[[x,y,z],...], optional up (default X), scales:[[u,v],...] per path point. Sweeps capped sections with transported frames and triangulated sides.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "path": {},
+            "profile": {
+              "type": "array",
+              "items": {}
+            },
+            "scales": {
+              "type": "array",
+              "items": {}
+            },
+            "up": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "uv": {}
+          },
+          "required": [
+            "path",
+            "profile"
+          ]
+        }
+      },
+      {
+        "name": "taper",
+        "description": "Apply piecewise scales perpendicular to an axis on the current selection.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "string"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "object": {
+              "type": "integer"
+            },
+            "profile": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "axis",
+            "profile"
+          ]
+        }
+      },
+      {
+        "name": "texture_assign",
+        "description": "Named image resources and face assignments Direct texture mapping and PNG export; see the same appearance help topic",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "texture": {}
+          },
+          "required": [
+            "texture"
+          ]
+        }
+      },
+      {
+        "name": "texture_bake",
+        "description": "Recompute layered textures with optional stack flattening.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "flatten": {
+              "type": "boolean"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture"
+          ]
+        }
+      },
+      {
+        "name": "texture_bake_normals",
+        "description": "Bake mesh normals to a texture.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "max_distance": {},
+            "source": {},
+            "target": {},
+            "texture": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "texture_create",
+        "description": "texture, width, height (1–1024), color:[r,g,b,a] in 0–1. Creates a solid image; rejects an existing name.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "color": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "double_sided": {
+              "type": "boolean"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "texture": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "texture",
+            "width",
+            "height"
+          ]
+        }
+      },
+      {
+        "name": "texture_define",
+        "description": "Named image resources and face assignments Direct texture mapping and PNG export; see the same appearance help topic",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "alpha_cutoff": {
+              "type": "number"
+            },
+            "double_sided": {
+              "type": "boolean"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "rgba_base64": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "width",
+            "height",
+            "rgba_base64"
+          ]
+        }
+      },
+      {
+        "name": "texture_export",
+        "description": "Named image resources and face assignments Direct texture mapping and PNG export; see the same appearance help topic",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture"
+          ]
+        }
+      },
+      {
+        "name": "texture_import",
+        "description": "Named image resources and face assignments Direct texture mapping and PNG export; see the same appearance help topic",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "alpha_cutoff": {
+              "type": "number"
+            },
+            "double_sided": {
+              "type": "boolean"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_add",
+        "description": "texture, layer:{name,channel?,color?,opacity?,blend?,visible?,mask?}. Channel defaults to base_color; color to white RGBA; opacity to 1; blend to normal; visible to true.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "layer": {
+              "type": "object"
+            },
+            "source_texture": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_capture",
+        "description": "texture, layer. Read-only grayscale mask PNG using the usual artifact reply and CLI --output mask.png.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "layer": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_mask_faces",
+        "description": "texture, layer, optional object, faces, filter; mode:\"faces\" (default) or \"boundary\". Replaces the mask with filled UV polygons or strokes along edges incident to exactly one face in the requested set.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "layer": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "radius": {},
+            "texture": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "texture_layer_move",
+        "description": "Move a texture layer to a zero-based index.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer"
+            },
+            "layer": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer",
+            "index"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_paint",
+        "description": "Append UV brush strokes to a texture layer mask.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "layer": {
+              "type": "string"
+            },
+            "strokes": {
+              "type": "array",
+              "items": {}
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer",
+            "strokes"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_remove",
+        "description": "Remove a layer and recomposite the texture.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "layer": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer"
+          ]
+        }
+      },
+      {
+        "name": "texture_layer_set",
+        "description": "texture, layer:\"name\", changes:{color?,opacity?,blend?,visible?,mask?}. Mask changes merge named fields into the existing mask, so adjusting noise preserves strokes/polygons.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "object"
+            },
+            "layer": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "layer",
+            "changes"
+          ]
+        }
+      },
+      {
+        "name": "texture_map_set",
+        "description": "Snapshot another registered image as a texture channel base.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "source_texture": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "channel",
+            "source_texture"
+          ]
+        }
+      },
+      {
+        "name": "texture_mask_capture",
+        "description": "texture, name. Read-only grayscale PNG of the resolved definition.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "texture_mask_paint",
+        "description": "texture, name, strokes:[...]. Appends mask strokes using the existing UV radius/hardness/opacity/value schema.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "strokes": {
+              "type": "array",
+              "items": {}
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "name",
+            "strokes"
+          ]
+        }
+      },
+      {
+        "name": "texture_mask_remove",
+        "description": "texture, name. Deletes an unreferenced named mask.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "texture_mask_set",
+        "description": "texture, name, mask:{...}. Creates or replaces a named definition.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mask": {
+              "type": "object"
+            },
+            "name": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "name",
+            "mask"
+          ]
+        }
+      },
+      {
+        "name": "texture_mask_stamp",
+        "description": "texture, name, source_texture, center:[u,v], size:[u,v], optional rotation, opacity (1), value (1). Snapshots the registered image's baked base color as a brush alpha.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "center": {},
+            "name": {
+              "type": "string"
+            },
+            "opacity": {},
+            "rotation": {},
+            "size": {},
+            "source_texture": {},
+            "texture": {},
+            "value": {}
+          }
+        }
+      },
+      {
+        "name": "texture_mask_surface",
+        "description": "Set a named mask with texture, name, a complete shape, and the same optional scope and expansion fields. Reissuing the command without a scope keeps the existing position/UV snapshot.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "shape": {},
+            "texture": {}
+          }
+        }
+      },
+      {
+        "name": "texture_mask_transform",
+        "description": "texture, name, optional offset:[u,v], scale:[u,v], center:[u,v] (default [0.5,0.5]), rotation in counterclockwise degrees. Sets an absolute transform; omitted values reset to identity.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "center": {},
+            "name": {
+              "type": "string"
+            },
+            "offset": {},
+            "rotation": {},
+            "scale": {},
+            "texture": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "texture_normal_from_height",
+        "description": "texture, strength (0–64, or null to disable). Derives a tangent-space normal map after compositing height.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "strength": {},
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture",
+            "strength"
+          ]
+        }
+      },
+      {
+        "name": "texture_remove",
+        "description": "Remove an unassigned texture.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture"
+          ]
+        }
+      },
+      {
+        "name": "texture_settings",
+        "description": "Update the material's texture filter or sidedness.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "alpha_cutoff": {},
+            "double_sided": {
+              "type": "boolean"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "texture": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "texture"
+          ]
+        }
+      },
+      {
+        "name": "thicken",
+        "description": "Thicken. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "direction": {},
+            "object": {
+              "type": "integer"
+            },
+            "thickness": {}
+          }
+        }
+      },
+      {
+        "name": "transaction",
+        "description": "Preview or atomically commit supported editor edits. Supply commands or commit an existing preview using its ID and revision.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "camera": {
+              "type": "object"
+            },
+            "commands": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            },
+            "commit": {
+              "type": "boolean"
+            },
+            "guards": {
+              "type": "object"
+            },
+            "preview": {},
+            "preview_id": {},
+            "revision": {
+              "type": "integer"
+            },
+            "watch_boundaries": {
+              "type": "array",
+              "items": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "triangulate",
+        "description": "object: triangulate convex planar polygons, preserving each source face ID for its first triangle.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "undo",
+        "description": "Restore the previous document snapshot.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "uv_clear",
+        "description": "Explicit face/vertex corner values and scope Direct UV editing and validation; read help topic uv-editing-and-vertex-painting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "uv_pack",
+        "description": "Repack existing UV islands while preserving mesh topology.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "padding": {
+              "type": "integer"
+            },
+            "region": {
+              "type": "string"
+            },
+            "resolution": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "uv_project",
+        "description": "Generate planar, box or cylindrical UV coordinates for a face scope.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "axes": {
+              "type": "array",
+              "items": {}
+            },
+            "axis": {
+              "type": "integer"
+            },
+            "bounds": {
+              "type": "array",
+              "items": {}
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "filter": {
+              "type": "object"
+            },
+            "fit_sections": {},
+            "masters_only": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "phase": {
+              "type": "number"
+            },
+            "region": {},
+            "section_tolerance": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      {
+        "name": "uv_set",
+        "description": "Write UV values to selected face corners or to all in-scope corners of a vertex.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "values": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "values"
+          ]
+        }
+      },
+      {
+        "name": "uv_transform",
+        "description": "Explicit face/vertex corner values and scope Direct UV editing and validation; read help topic uv-editing-and-vertex-painting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "rotation": {
+              "type": "number"
+            },
+            "scale": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "uv_unwrap",
+        "description": "Select an object, faces, or named region. Optionally pass seams:[[a,b],...], square atlas resolution (16–4096, default 1024), and padding in pixels (default 2).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "object": {
+              "type": "integer"
+            },
+            "padding": {
+              "type": "integer"
+            },
+            "region": {
+              "type": "string"
+            },
+            "resolution": {
+              "type": "integer"
+            },
+            "seams": {
+              "type": "array",
+              "items": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "version",
+        "description": "Return the CLI version and supported wrapper features.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "vertex_color_clear",
+        "description": "Vertex IDs and normalized RGB Direct vertex painting, exact queries and capture with mode:\"vertex_colors\"",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "vertex_color_gradient",
+        "description": "Explicit scopes, mapping bounds and paint parameters Optional coordinate/normal operations; read help topic native-appearance-recipes; use CLI --batch for JSON command recipes",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "end": {},
+            "from": {},
+            "object": {
+              "type": "integer"
+            },
+            "start": {},
+            "to": {}
+          }
+        }
+      },
+      {
+        "name": "vertex_color_set",
+        "description": "Set per-vertex RGB values, or apply one RGB value to a list of vertex IDs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "color": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "object": {
+              "type": "integer"
+            },
+            "values": {
+              "type": "array",
+              "items": {}
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "vertex_color_shade",
+        "description": "Explicit scopes, mapping bounds and paint parameters Optional coordinate/normal operations; read help topic native-appearance-recipes; use CLI --batch for JSON command recipes",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "absolute_axes": {},
+            "ambient": {},
+            "blend": {
+              "type": "string"
+            },
+            "direction": {},
+            "object": {
+              "type": "integer"
+            },
+            "strength": {}
+          }
+        }
+      },
+      {
+        "name": "visual_hull",
+        "description": "Build an approximate outer volume from segmented camera views and write OBJ or native project JSON.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agreement": {
+              "type": "number"
+            },
+            "bounds": {
+              "type": "array",
+              "items": {}
+            },
+            "output_path": {
+              "type": "string"
+            },
+            "resolution": {
+              "type": "integer"
+            },
+            "views": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "bounds",
+            "views",
+            "output_path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "weld",
+        "description": "optional vertices, target, position: [x,y,z] Merge vertices, repair face loops and remove collapsed faces; select survivor",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "position": {},
+            "target": {},
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "weld_coincident",
+        "description": "Weld coincident. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "expected_removed_vertices": {},
+            "object": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "workflow_assess",
+        "description": "requirement, assessment, required evidence:[resource_id,...], optional object. Reference needs reference evidence; primary forms a capture; views two distinct camera records; export validation report/evidence.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "assessment": {
+              "type": "string"
+            },
+            "basis": {
+              "type": "string"
+            },
+            "constraints": {
+              "type": "object"
+            },
+            "critical_regions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidence": {},
+            "follow_up": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "accepted",
+                "needs_revision"
+              ]
+            },
+            "require_production_ready": {
+              "type": "boolean"
+            },
+            "requirement": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement",
+            "assessment",
+            "evidence"
+          ]
+        }
+      },
+      {
+        "name": "workflow_part_plan",
+        "description": "Workflow part plan. See atk-mesh help for command details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "plan": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      {
+        "name": "workflow_reopen",
+        "description": "requirement, reason, optional object; explicitly exempt or reset a check.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "requirement": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement",
+            "reason"
+          ]
+        }
+      },
+      {
+        "name": "workflow_report",
+        "description": "Generate a Markdown report of the workspace review workflow.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "workflow_resource",
+        "description": "kind:\"capture\", trace session, event, description, optional object. Derives path/camera from a successful capture/comparison and verifies its source snapshot matches current geometry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "capture": {
+              "type": "string"
+            },
+            "crop": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "description": {
+              "type": "string"
+            },
+            "event": {
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "object": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            },
+            "view": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "description"
+          ]
+        }
+      },
+      {
+        "name": "workflow_stage",
+        "description": "Advance to a workflow stage after its requirements are satisfied.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "stage"
+          ]
+        }
+      },
+      {
+        "name": "workflow_status",
+        "description": "Requirements and paged resources: offset, limit 1..64, default 8.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "workflow_waive",
+        "description": "requirement, reason, optional object; explicitly exempt or reset a check.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "requirement": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement",
+            "reason"
+          ]
+        }
+      }
+    ]
+  }
+}

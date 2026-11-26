@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::{Document, base64, session::Session};
+use atk_mesh::{Document, base64, session::Session};
 use serde_json::{Value, json};
 
 fn scene() -> Document {

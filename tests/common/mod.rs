@@ -1,4 +1,4 @@
-use gpt_mesh::Document;
+use atk_mesh::Document;
 use serde_json::json;
 use std::path::Path;
 

@@ -150,7 +150,7 @@ pub(super) fn export(
             node("FBXVersion", vec![integer(7400)], vec![]),
             node("EncryptionType", vec![integer(0)], vec![]),
             timestamp,
-            node("Creator", vec![string("GPT Mesh")], vec![]),
+            node("Creator", vec![string("atk-mesh")], vec![]),
             scene_info,
         ],
     );
@@ -550,7 +550,7 @@ pub(super) fn export(
             vec![string("1970-01-01 10:00:00:000")],
             vec![],
         ),
-        node("Creator", vec![string("GPT Mesh")], vec![]),
+        node("Creator", vec![string("atk-mesh")], vec![]),
         globals,
         documents,
         node("References", vec![], vec![]),

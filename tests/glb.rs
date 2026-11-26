@@ -1,4 +1,4 @@
-use gpt_mesh::{Document, session::Session};
+use atk_mesh::{Document, session::Session};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

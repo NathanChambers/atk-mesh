@@ -1,4 +1,4 @@
-use gpt_mesh::Document;
+use atk_mesh::Document;
 use serde_json::json;
 
 #[test]
@@ -476,7 +476,7 @@ fn concave_boundary_fill_does_not_render_across_its_notch() {
         .execute(json!({"command":"create_face","object":2,"vertices":front}))
         .unwrap();
     let capture=document.execute(json!({"command":"capture","mode":"silhouette","solo_objects":[2],"width":400,"height":400,"yaw":0,"pitch":0,"zoom":80,"center":[1.5,1.5,0.1]})).unwrap();
-    let encoded = gpt_mesh::base64::decode(capture["png_base64"].as_str().unwrap()).unwrap();
+    let encoded = atk_mesh::base64::decode(capture["png_base64"].as_str().unwrap()).unwrap();
     let mut reader = png::Decoder::new(std::io::Cursor::new(encoded))
         .read_info()
         .unwrap();

@@ -1,5 +1,5 @@
 {
-  "name": "gpt-mesh-viewer",
+  "name": "atk-mesh-viewer",
   "private": true,
   "type": "module",
   "scripts": {

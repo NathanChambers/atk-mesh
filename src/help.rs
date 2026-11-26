@@ -1,6 +1,19 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+pub(super) const COMMAND: &str = "help";
+
+pub(super) fn tool() -> Value {
+    crate::command_catalog::tool(
+        COMMAND,
+        "Read the command help index or page through a named topic.",
+        json!({
+            "type":"object",
+            "properties":{"all":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"},"topic":{"type":"string"}}
+        }),
+    )
+}
+
 fn topics() -> BTreeMap<String, (&'static str, &'static str)> {
     let mut topics = BTreeMap::from([
         (

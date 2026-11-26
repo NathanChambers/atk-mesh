@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::{Document, session::Session};
+use atk_mesh::{Document, session::Session};
 use serde_json::{Value, json};
 
 fn instance(document: &mut Document) -> Value {
@@ -129,7 +129,7 @@ fn exporting_a_group_keeps_instance_links_and_world_pivots() {
         let result = document
             .execute(json!({"command":"export","format":"glb","merge":merge}))
             .unwrap();
-        let bytes = gpt_mesh::base64::decode(result["glb_base64"].as_str().unwrap()).unwrap();
+        let bytes = atk_mesh::base64::decode(result["glb_base64"].as_str().unwrap()).unwrap();
         let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
         let file: Value = serde_json::from_slice(&bytes[20..20 + length]).unwrap();
         assert_eq!(file["nodes"].as_array().unwrap().len(), 1);
@@ -511,7 +511,7 @@ fn history_persistence_queries_capture_and_exports_resolve_instances() {
     let fbx = restored
         .execute(json!({"command":"export","format":"fbx"}))
         .unwrap();
-    let bytes = gpt_mesh::base64::decode(fbx["fbx_base64"].as_str().unwrap()).unwrap();
+    let bytes = atk_mesh::base64::decode(fbx["fbx_base64"].as_str().unwrap()).unwrap();
     assert!(bytes.starts_with(b"Kaydara FBX Binary"));
     restored
         .execute(json!({"command":"object_delete","object":2}))
@@ -670,7 +670,7 @@ fn rotated_nonuniform_instance_writes_inverse_transpose_normals_to_glb_and_captu
     document.execute(json!({"command":"object_instance","object":1,"name":"Scaled","scale":[2,3,4],"value":[10,0,0]})).unwrap();
     document.execute(json!({"command":"object_rotate","object":2,"value":[0,0,90]})).unwrap();
     let export = document.execute(json!({"command":"export","format":"glb","solo_objects":[2]})).unwrap();
-    let bytes = gpt_mesh::base64::decode(export["glb_base64"].as_str().unwrap()).unwrap();
+    let bytes = atk_mesh::base64::decode(export["glb_base64"].as_str().unwrap()).unwrap();
     let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let glb: Value = serde_json::from_slice(&bytes[20..20+length]).unwrap();
     let index = glb["meshes"][0]["primitives"][0]["attributes"]["NORMAL"].as_u64().unwrap() as usize;
@@ -686,7 +686,7 @@ fn rotated_nonuniform_instance_writes_inverse_transpose_normals_to_glb_and_captu
     }
 
     let capture = document.execute(json!({"command":"capture","mode":"normals","solo_objects":[2],"yaw":180,"pitch":0,"center":[12.99,-1.99,-4],"zoom":2000,"width":100,"height":100})).unwrap();
-    let png = gpt_mesh::base64::decode(capture["png_base64"].as_str().unwrap()).unwrap();
+    let png = atk_mesh::base64::decode(capture["png_base64"].as_str().unwrap()).unwrap();
     let mut reader = png::Decoder::new(std::io::Cursor::new(png)).read_info().unwrap();
     let mut pixels = vec![0; reader.output_buffer_size()];
     reader.next_frame(&mut pixels).unwrap();

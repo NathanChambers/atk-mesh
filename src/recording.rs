@@ -52,6 +52,10 @@ impl Recording {
 }
 
 pub fn replay(path: &Path, frame: Option<usize>) -> Result<()> {
+    replay_to(path, frame, io::stdout().lock())
+}
+
+pub fn replay_to(path: &Path, frame: Option<usize>, mut output: impl Write) -> Result<()> {
     let file = File::open(path)?;
     let mut lines = BufReader::new(file).lines();
     let first = lines.next().ok_or("Recording is empty")??;
@@ -60,16 +64,15 @@ pub fn replay(path: &Path, frame: Option<usize>) -> Result<()> {
         return Err("Unsupported debug recording".into());
     }
 
-    let mut stdout = io::stdout().lock();
     if frame == Some(0) {
         if start["state"].is_null() {
             return Err("Recording has no saved snapshot for frame 0".into());
         }
-        writeln!(stdout, "{}", start["state"])?;
+        writeln!(output, "{}", start["state"])?;
         return Ok(());
     }
     if frame.is_none() {
-        writeln!(stdout, "{start}")?;
+        writeln!(output, "{start}")?;
     }
     for line in lines {
         let line = line?;
@@ -79,11 +82,11 @@ pub fn replay(path: &Path, frame: Option<usize>) -> Result<()> {
                 if event["state"].is_null() {
                     break;
                 }
-                writeln!(stdout, "{}", event["state"])?;
+                writeln!(output, "{}", event["state"])?;
                 return Ok(());
             }
         } else {
-            writeln!(stdout, "{event}")?;
+            writeln!(output, "{event}")?;
         }
     }
     if let Some(frame) = frame {

@@ -1,4 +1,7 @@
-use gpt_mesh::session::Session;
+#[allow(dead_code)]
+mod mcp;
+
+use atk_mesh::{command_catalog, session::Session};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -136,6 +139,7 @@ fn handle(
     let first_line = line.clone();
     let mut length = 0;
     let mut if_none_match = None;
+    let mut has_origin = false;
     let mut header_bytes = line.len();
     loop {
         line.clear();
@@ -155,6 +159,8 @@ fn handle(
                 length = value.trim().parse::<usize>()?;
             } else if name.eq_ignore_ascii_case("if-none-match") {
                 if_none_match = Some(value.trim().to_owned());
+            } else if name.eq_ignore_ascii_case("origin") {
+                has_origin = true;
             }
         }
     }
@@ -196,6 +202,12 @@ fn handle(
 
     let mut etag_header = String::new();
     let (status, content_type, output) = match route.as_slice() {
+        [_, "/mcp", _] if has_origin => (403, "text/plain", "Browser origins are disabled for MCP".into()),
+        ["POST", "/mcp", _] => {
+            let (status, output) = mcp_route(host, query, &body, updates);
+            (status, "application/json", output)
+        }
+        [_, "/mcp", _] => (405, "text/plain", String::new()),
         ["GET", "/workspaces", _] => (200, "application/json", host.list().to_string()),
         ["GET", "/state/meta", _] => {
             let response = parse_workspace_query(query)
@@ -283,6 +295,39 @@ fn is_workspace_route(method: &str, path: &str) -> bool {
         "GET" => path == "/sessions" || path.starts_with("/sessions/"),
         "POST" => matches!(path, "/command" | "/command/debug"),
         _ => false,
+    }
+}
+
+fn mcp_route(host: &mut WorkspaceHost, query: &str, body: &[u8], updates: &ViewerUpdates) -> (u16, String) {
+    let request: Value = match serde_json::from_slice(body) {
+        Ok(request) => request,
+        Err(_) => return (400, json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}).to_string()),
+    };
+    let tools = command_catalog::editor_tools();
+    let response = mcp::dispatch_request(&request, "atk-mesh", tools, true, &mut |name, arguments| {
+        if name == "list_workspaces" {
+            return Ok(host.list());
+        }
+        if name == "version" {
+            return Ok(json!({"ok":true,"version":env!("CARGO_PKG_VERSION")}));
+        }
+        let workspace = parse_workspace_query(query)?;
+        let session = host.editor(workspace.as_deref())?;
+        let previous_revision = session.revision();
+        let snapshots = request["params"]["_meta"]["atk-mesh/debug"] == true;
+        let reply = if name == "batch" {
+            execute_batch(session, mcp::batch_commands(arguments)?.to_vec(), snapshots)
+        } else {
+            execute_command(session, mcp::native_command(name, arguments)?, snapshots)
+        };
+        if session.revision() != previous_revision {
+            updates.publish();
+        }
+        Ok(reply)
+    });
+    match response {
+        Some(response) => (200, response.to_string()),
+        None => (202, String::new()),
     }
 }
 

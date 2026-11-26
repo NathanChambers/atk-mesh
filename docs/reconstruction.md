@@ -22,7 +22,7 @@ For perspective camera fitting, add an `anchors` array with at least six well-di
 
 ## Visual hull
 
-`visual_hull` projects a bounded voxel grid into two or more segmented views. The quad mesh is an outer volume estimate for checking proportions before modeling parts. Use `--output hull.obj` for interchange or `--output project.json` in a fresh workspace to edit the mesh with Mesh Workbench.
+`visual_hull` projects a bounded voxel grid into two or more segmented views. The quad mesh is an outer volume estimate for checking proportions before modeling parts. Use `--output hull.obj` for interchange or `--output project.json` in a fresh workspace to edit the mesh with atk-mesh.
 
 The reply's `result.guidance` includes a user-facing summary, the basis for the volume estimate, its limitations, and next steps for part modeling and review. When presenting the hull, explain its role as a proportions reference and describe the intended refinement before showing it to the user.
 
@@ -38,6 +38,6 @@ The reply's `result.guidance` includes a user-facing summary, the basis for the 
 }
 ```
 
-Use opaque black-and-white PNG masks. Foreground defaults to white. Use `"foreground":"black"` for Mesh Workbench silhouette captures. Mask paths resolve from the CLI working directory. Resolution is the number of cells per axis and accepts 4 through 96. Choose bounds that enclose the object.
+Use opaque black-and-white PNG masks. Foreground defaults to white. Use `"foreground":"black"` for atk-mesh silhouette captures. Mask paths resolve from the CLI working directory. Resolution is the number of cells per axis and accepts 4 through 96. Choose bounds that enclose the object.
 
 By default every view must support a voxel. For approximate views, set a view's `weight` below 1 and lower the top-level `agreement` below 1. For example, two trusted views with weight 1 and one approximate view with weight 0.25 at agreement 0.85 require both trusted views. With only a few views, the blockout can contain extra volume, and recesses that never change the silhouettes remain unresolved.

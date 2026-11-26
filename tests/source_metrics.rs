@@ -1,6 +1,6 @@
 mod common;
 
-use gpt_mesh::{Document, session::Session};
+use atk_mesh::{Document, session::Session};
 use serde_json::{Value, json};
 
 fn prism(profile: &[[f64; 2]], capped: bool) -> Document {
@@ -129,7 +129,7 @@ fn sharing_vertices_does_not_allow_a_surface_across_a_polygon_diagonal() {
 }
 #[test]
 fn an_inward_cavity_is_distinct_from_an_inverted_outer_shell() {
-    let mut doc = gpt_mesh::Document::default();
+    let mut doc = atk_mesh::Document::default();
     let saved = doc.execute(serde_json::json!({"command":"save"})).unwrap();
     let mut project = saved.clone();
     let original_faces = project["mesh"]["faces"].as_object().unwrap().clone();

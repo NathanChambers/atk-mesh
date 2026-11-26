@@ -1,10 +1,13 @@
+#[allow(dead_code)]
+mod mcp;
+
 use serde_json::{Value, json};
 use std::io::{IsTerminal, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gpt_mesh::feedback;
+use atk_mesh::{command_catalog, feedback};
 mod recording;
 
 fn main() {
@@ -20,6 +23,11 @@ fn main() {
 
 fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.as_slice() == ["--commands"] {
+        println!("{}", json!({"tools":command_catalog::cli_tools()}));
+        return Ok(());
+    }
+
     if arguments.first().is_some_and(|argument| argument == "--replay") {
         return match arguments.as_slice() {
             [_, path] => recording::replay(Path::new(path), None),
@@ -45,6 +53,7 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("\nLocal reconstruction commands: reference_guides (JSON/SVG) and visual_hull (outer volume estimate as project JSON/OBJ). Both take --input and --output, with no editor required.");
         println!("\nMesh sculpting: send JSON help with topic \"local-sculpting\" to an editor for move_vertices, sculpt_stroke, and local connectivity checks.");
         println!("\nLocal feedback commands: feedback_submit (kind, summary, goal, observed) and feedback_list (optional kind, limit, before). Run as single JSON requests without an editor. MESH_FEEDBACK_DIR overrides the per-user inbox.");
+        println!("\nUse --mcp with --port PORT for stdio MCP, or --commands for machine-readable help.");
         return Ok(());
     }
 
@@ -63,10 +72,14 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut positional = Vec::new();
     let mut batch = false;
     let mut debug = false;
+    let mut mcp_mode = false;
+    let mut batch_guidance = true;
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--debug" if !debug => debug = true,
+            "--mcp" => mcp_mode = true,
+            "--no-batch-guidance" => batch_guidance = false,
             "--batch" => {
                 if batch {
                     return Err("--batch specified more than once".into());
@@ -130,6 +143,18 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
                 .map(Duration::from_secs).ok_or("--timeout must be a positive number of seconds")
         })
         .transpose()?;
+
+    if mcp_mode {
+        *replied = true;
+        if batch || debug || list_workspaces || explicit_sources > 0 || output.is_some() || !positional.is_empty() {
+            return Err("--mcp accepts only connection options".into());
+        }
+        let port = read_port()?;
+        let tools = command_catalog::cli_tools();
+        return Ok(mcp::serve("atk-mesh", tools, batch_guidance, |name, arguments| {
+            execute_mcp_tool(name, arguments, port, timeout).map_err(|error| error.to_string())
+        })?);
+    }
 
     if list_workspaces {
         if batch || debug || explicit_sources > 0 || output.is_some() || !positional.is_empty() {
@@ -262,6 +287,36 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn execute_mcp_tool(name: &str, arguments: &Value, port: u16, timeout: Option<Duration>) -> Result<Value, Box<dyn std::error::Error>> {
+    if name == "replay" {
+        let path = arguments["path"].as_str().ok_or("path must be a string")?;
+        let frame = arguments.get("frame").map(|frame| {
+            frame.as_u64().and_then(|value| usize::try_from(value).ok()).ok_or("frame must be a nonnegative integer")
+        }).transpose()?;
+        let mut output = Vec::new();
+        recording::replay_to(Path::new(path), frame, &mut output)?;
+        let output = String::from_utf8(output)?;
+        return Ok(json!({"ok":true,"output":output.trim_end()}));
+    }
+    if name == "version" {
+        return Ok(json!({"ok":true,"version":env!("CARGO_PKG_VERSION")}));
+    }
+    if name == "list_workspaces" {
+        return request_json("GET", "/workspaces", None, port, timeout);
+    }
+    let mut request = if name == "batch" {
+        json!(mcp::batch_commands(arguments)?)
+    } else {
+        mcp::native_command(name, arguments)?
+    };
+    if feedback::is_command(&request) || matches!(name, "reference_guides" | "visual_hull") {
+        let output = arguments.get("output_path").and_then(Value::as_str);
+        return execute_local(&request, output);
+    }
+    assign_request_id(&mut request)?;
+    request_json("POST", "/command", Some(&request), port, timeout)
+}
+
 fn execute_local(request: &Value, output: Option<&str>) -> Result<Value, Box<dyn std::error::Error>> {
     let result = if feedback::is_command(request) {
         if output.is_some() {
@@ -269,7 +324,7 @@ fn execute_local(request: &Value, output: Option<&str>) -> Result<Value, Box<dyn
         }
         feedback::run(request)?
     } else {
-        gpt_mesh::reconstruction::run(request, output)?.ok_or("expected a reconstruction command")?
+        atk_mesh::reconstruction::run(request, output)?.ok_or("expected a reconstruction command")?
     };
     Ok(json!({"ok": true, "result": result}))
 }
@@ -403,13 +458,13 @@ fn write_requested_output(
             }
         } else if let Some(format) = binary_output {
             let encoded = result[format!("{format}_base64")].as_str().ok_or_else(|| format!("missing {} data", format.to_uppercase()))?;
-            let bytes = gpt_mesh::base64::decode(encoded)?;
+            let bytes = atk_mesh::base64::decode(encoded)?;
             std::fs::write(path, bytes)?;
         } else if png_output {
             let encoded = result["png_base64"]
                 .as_str()
                 .ok_or("PNG output requires a capture command")?;
-            let bytes = gpt_mesh::base64::decode(encoded)?;
+            let bytes = atk_mesh::base64::decode(encoded)?;
             std::fs::write(path, bytes)?;
         } else {
             let output = result["svg"]
@@ -449,7 +504,18 @@ fn request_json(
         let command = request.as_array().and_then(|commands| commands.first()).unwrap_or(request);
         command["cli_request_id"].as_str()
     });
-    let input = request
+    let mesh_command = matches!(path, "/command" | "/command/debug");
+    let mcp_request = if mesh_command {
+        let mut envelope = mcp::tools_call(request.cloned().ok_or("Missing command request")?, "batch")?;
+        if path == "/command/debug" {
+            envelope["params"]["_meta"] = json!({"atk-mesh/debug":true});
+        }
+        Some(envelope)
+    } else {
+        None
+    };
+    let route = if mesh_command { "/mcp" } else { path };
+    let input = mcp_request.as_ref().or(request)
         .as_ref()
         .map(serde_json::to_string)
         .transpose()?
@@ -463,7 +529,7 @@ fn request_json(
     };
     write!(
         connection,
-        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "{method} {route} HTTP/1.0\r\nHost: 127.0.0.1\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         input.len(),
         input
     ).map_err(|error| response_error(&error))?;
@@ -472,5 +538,15 @@ fn request_json(
     let (_, body) = response
         .split_once("\r\n\r\n")
         .ok_or_else(|| response_error(&"invalid HTTP response"))?;
-    serde_json::from_str(body).map_err(|error| response_error(&error).into())
+    let response: Value = serde_json::from_str(body).map_err(|error| response_error(&error))?;
+    if !mesh_command {
+        return Ok(response);
+    }
+    if let Some(reply) = response["result"].get("structuredContent") {
+        return Ok(reply.clone());
+    }
+    if let Some(error) = response["error"]["message"].as_str() {
+        return Ok(json!({"ok":false,"error":error}));
+    }
+    Err(response_error(&"invalid MCP response; update the Mesh editor and CLI together").into())
 }

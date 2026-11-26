@@ -1,4 +1,4 @@
-use gpt_mesh::Document;
+use atk_mesh::Document;
 use serde_json::{Value, json};
 
 fn fixture() -> Document {
@@ -122,7 +122,7 @@ fn animated_glb_encodes_skin_bindings_root_motion_and_clip_interpolation() {
     document.execute(json!({"command":"animation_track_set","name":"Move","bone":"tip","interpolation":"step",
         "keys":[{"time":0},{"time":1,"rotation":[0,0,45]}]})).unwrap();
     let result = document.execute(json!({"command":"export","format":"glb"})).unwrap();
-    let bytes = gpt_mesh::base64::decode(result["glb_base64"].as_str().unwrap()).unwrap();
+    let bytes = atk_mesh::base64::decode(result["glb_base64"].as_str().unwrap()).unwrap();
     assert_eq!(&bytes[..4], b"glTF");
     assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize, bytes.len());
     let json_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
@@ -151,14 +151,14 @@ fn animated_glb_encodes_skin_bindings_root_motion_and_clip_interpolation() {
 }
 #[test]
 fn projected_weights_and_shared_curve_match_explicit_rig_data() {
-    let mut document = gpt_mesh::Document::default();
+    let mut document = atk_mesh::Document::default();
     document.execute(serde_json::json!({
         "command":"rig_set","rig":{"bones":[
             {"name":"parent","position":[0,0,0]},
             {"name":"child","parent":"parent","position":[0,1,0]}
         ]}
     })).unwrap();
-    let run = |document: &mut gpt_mesh::Document, request| document.execute(request).unwrap();
+    let run = |document: &mut atk_mesh::Document, request| document.execute(request).unwrap();
     run(&mut document, serde_json::json!({
         "command":"skin_weights_set","vertices":[1,2,3],
         "ramp":{"bones":["parent","child"],"start":[-2,0,0],"end":[2,0,0],"easing":"smoothstep"}

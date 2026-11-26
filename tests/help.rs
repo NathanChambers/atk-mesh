@@ -1,4 +1,4 @@
-use gpt_mesh::session::Session;
+use atk_mesh::session::Session;
 use serde_json::json;
 
 #[test]
