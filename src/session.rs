@@ -1077,6 +1077,8 @@ impl Session {
             self.import_texture(&request)
         } else if request["command"] == "import_glb" {
             self.import_mesh(&request, "GLB")
+        } else if request["command"] == "import_obj" {
+            self.import_mesh(&request, "OBJ")
         } else if request["command"] == "import_fbx" {
             self.import_mesh(&request, "FBX")
         } else if request["command"] == "query_record" {

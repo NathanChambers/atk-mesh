@@ -969,6 +969,21 @@
         }
       },
       {
+        "name": "import_obj",
+        "description": "path inside the active model workspace Append Wavefront OBJ polygon geometry as editable objects, undoable; preserves existing geometry and IDs",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
         "name": "import_glb",
         "description": "path inside the active model workspace Append static GLB 2.0 triangle geometry as editable objects, undoable; preserves existing geometry and IDs",
         "inputSchema": {

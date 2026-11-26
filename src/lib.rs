@@ -582,7 +582,7 @@ impl Document {
             "uv_unwrap" | "uv_pack" => return atlas::edit(&mut self.mesh, request, command == "uv_pack").map(Some),
             "import_glb" => return glb::import(&mut self.mesh, request).map(Some),
             "stretch_band" => return stretch::edit(&mut self.mesh, request).map(Some),
-            "import_fbx" => return fbx_import::import(&mut self.mesh, request).map(Some),
+            "import_fbx" | "import_obj" => return fbx_import::import(&mut self.mesh, request).map(Some),
             "move_in_view" => {
                 let camera = if let Some(id) = request.get("view_id") {
                     let view = self

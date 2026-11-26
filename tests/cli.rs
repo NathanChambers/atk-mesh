@@ -190,6 +190,18 @@ fn viewer_updates_cover_partial_batches_and_saved_edits() {
 }
 
 #[test]
+fn cli_imports_obj_scan_coordinates_and_polygon_winding() {
+    let (server, port) = start_server_at(false, None, false);
+    let scan = "o Panel\nvn 0 0 1\nv 12 0 4\nv 17 0 4\nv 17 3 4\nv 12 3 4\nf 1//1 2//1 3//1 4//1\n";
+    std::fs::write(server.workspace.join("scan.obj"), scan).unwrap();
+    let output = invoke(port, &[], r#"{"command":"import_obj","path":"scan.obj"}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let saved: Value = serde_json::from_slice(&std::fs::read(server.workspace.join("project.json")).unwrap()).unwrap();
+    assert_eq!(saved["mesh"]["vertices"]["1"], serde_json::json!([12.0,0.0,4.0]));
+    assert_eq!(saved["mesh"]["faces"]["1"], serde_json::json!([1,2,3,4]));
+}
+
+#[test]
 fn cli_imports_binary_fbx_and_persists_editable_geometry() {
     let mut source = atk_mesh::Document::default();
     source.execute(serde_json::json!({"command":"object_create_box","name":"Cargo","min":[2,0,0],"max":[3,1,1],"origin":[2,0,0]})).unwrap();

@@ -13,6 +13,10 @@ fn coordinates(point: ufbx::Vec3) -> [f64; 3] {
 }
 
 pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> {
+    let obj = request["command"] == "import_obj";
+    let format = if obj { "OBJ" } else { "FBX" };
+    let element_limit = if obj { 2 * MAX_ELEMENTS } else { MAX_ELEMENTS };
+    let loader_limit = if obj { 2 * MAX_LOADER_BYTES } else { MAX_LOADER_BYTES };
     let path = request["path"].as_str().ok_or("path is required")?;
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
@@ -20,13 +24,15 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_SOURCE_BYTES {
-        return Err("FBX exceeds 512 MiB import limit".into());
+        return Err(format!("{format} exceeds 512 MiB import limit"));
     }
 
     let scene = ufbx::load_memory(
         &bytes,
         ufbx::LoadOpts {
-            file_format: ufbx::FileFormat::Fbx,
+            file_format: if obj { ufbx::FileFormat::Obj } else { ufbx::FileFormat::Fbx },
+            obj_unit_meters: 1.0,
+            obj_axes: ufbx::CoordinateAxes::right_handed_y_up(),
             ignore_animation: true,
             ignore_embedded: true,
             load_external_files: false,
@@ -36,17 +42,17 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
             target_axes: ufbx::CoordinateAxes::right_handed_y_up(),
             target_unit_meters: 1.0,
             result_allocator: ufbx::AllocatorOpts {
-                memory_limit: MAX_LOADER_BYTES,
+                memory_limit: loader_limit,
                 ..Default::default()
             },
             temp_allocator: ufbx::AllocatorOpts {
-                memory_limit: MAX_LOADER_BYTES,
+                memory_limit: loader_limit,
                 ..Default::default()
             },
             ..Default::default()
         },
     )
-    .map_err(|error| format!("cannot read FBX: {}", error.description))?;
+    .map_err(|error| format!("cannot read {format}: {}", error.description))?;
 
     let mut imported = Vec::new();
     let mut vertex_count = 0;
@@ -66,17 +72,17 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         vertex_count += source.num_vertices;
         face_count += face_total;
         corner_count += source.num_indices;
-        if vertex_count > MAX_ELEMENTS
-            || face_count > MAX_ELEMENTS
-            || corner_count > 4 * MAX_ELEMENTS
+        if vertex_count > element_limit
+            || face_count > element_limit
+            || corner_count > 4 * element_limit
         {
-            return Err("FBX exceeds import limits for vertices, faces or face corners".into());
+            return Err(format!("{format} exceeds import limits for vertices, faces or face corners"));
         }
 
         let matrix = &node.geometry_to_world;
         let determinant = ufbx::matrix_determinant(matrix);
         if !determinant.is_finite() || determinant == 0.0 {
-            return Err("singular or non-finite FBX mesh transform".into());
+            return Err(format!("singular or non-finite {format} mesh transform"));
         }
 
         let base = node.element.name.as_ref();
@@ -128,7 +134,7 @@ pub(super) fn import(mesh: &mut Mesh, request: &Value) -> Result<Value, String> 
         imported.push(id);
     }
     if face_count == skipped_faces {
-        return Err("FBX scene contains no polygon meshes".into());
+        return Err(format!("{format} scene contains no polygon meshes"));
     }
 
     Ok(json!({
