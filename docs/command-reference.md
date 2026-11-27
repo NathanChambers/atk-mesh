@@ -123,6 +123,34 @@ Use `missing_capability`, `command_issue`, `documentation`, or `workflow` as the
 
 The inbox is shared across workspaces for the current OS user. It defaults to `%LOCALAPPDATA%\atk-mesh\feedback` on Windows, `~/Library/Application Support/atk-mesh/feedback` on macOS, and `$XDG_DATA_HOME/atk-mesh/feedback` on Linux, with `~/.local/share/atk-mesh/feedback` as the Linux fallback. Existing legacy inboxes are reused when the new inbox does not exist. Set `MESH_FEEDBACK_DIR` to an absolute directory path to override the default. The list response includes the resolved path even when empty.
 
+## Full-volume reconstruction
+
+`reconstruct_volume` uses a local TripoSR model to generate an editable mesh from an image. Set `ATK_MESH_TRIPOSR` to a checkout of [TripoSR](https://github.com/VAST-AI-Research/TripoSR), and optionally set `ATK_MESH_PYTHON` to the Python executable for that environment. The environment needs PyTorch, Pillow, OmegaConf, einops, trimesh, imageio, rembg, transformers, huggingface-hub and scikit-image. The adapter uses scikit-image for mesh extraction. Model weights are loaded from the Hugging Face cache or downloaded on first use.
+
+```json
+{"command":"reconstruct_volume","image":"ref.png","mask":"mask.png","resolution":128,"aspect":"front_three_quarter","source":"original"}
+```
+
+Use a PNG with foreground alpha or supply a same-size mask PNG with white foreground. Use `--output` with the CLI, or `output_path` in stdio MCP. Output is editable project JSON or geometry-only OBJ. The model estimates orientation and shape in normalized coordinates. The response reports boundary and nonmanifold edge counts and suggests additional reference views. A closed edge count alone does not establish accurate hidden geometry or absence of self-intersections.
+
+For an offline checkpoint, set `ATK_MESH_TRIPOSR_WEIGHTS` to the directory containing the trusted TripoSR `config.yaml` and `model.ckpt`. Keep TripoSR's DINO encoder configuration in the Hugging Face cache used by Python.
+
+## Depth reconstruction
+
+`depth_mesh` back-projects a depth PNG into an open editable mesh. `fit_depth` takes a saved project and moves explicitly selected visible vertices toward samples from the same kind of depth view. Optional landmark bindings supply a target pixel per selected vertex. Both commands run locally without an editor and write native project JSON or OBJ. For CLI requests, pass the output with `--output`. Stdio MCP takes `output_path`.
+
+Relative paths resolve from the CLI process's working directory. Use absolute paths for images and saved projects when running from another directory. See [the editor handoff walkthrough](reconstruction.md#open-a-depth-reconstruction-in-the-editor) for a complete example.
+
+```json
+{"command":"depth_mesh","view":{"camera":{"width":384,"height":384,"yaw":0,"pitch":0,"zoom":125},"mask":"mask.png","depth":"depth.png","distance_range":[0,0.85],"maximum_jump":0.035,"aspect":"front_three_quarter","source":"original"}}
+```
+
+Use pixel-aligned depth and mask PNGs with camera dimensions matching the maps. The pixel budget is 262,144. White mask pixels keep geometry and black pixels exclude it, including internal holes. Depth uses 8-bit or 16-bit grayscale and maps black to the near end of `distance_range` and white to the far end in scene units along the camera axis. Orthographic distances are relative to the camera center. Set `maximum_jump` to reject triangles spanning depth discontinuities. It defaults to 5% of the supplied range.
+
+For `fit_depth`, also supply `project` as a saved JSON path and `vertices` as vertex IDs. Optional `landmarks` entries use `{"vertex":12,"pixel":[180,96]}`. `strength` defaults to 0.5 and `maximum_move` defaults to the view's `maximum_jump`. Use a new output path to keep the original project available for comparison. The reported mean distances measure movement toward the sampled targets for that pass. Calibrate the camera and fit range before comparing results.
+
+`depth_mesh`, `fit_depth`, and `visual_hull` include a `reference_coverage` advisory. Label views with `aspect` and `source` when known. The response suggests missing side and rear references. Generated views are recorded as such and can be used as companion references.
+
 ## Batch commands
 
 Pass a JSON array of 1–1024 command objects through stdin, `--command JSON`, or a UTF-8 file. The CLI detects arrays automatically. Use `--batch` to require array input. Update both the CLI and server to use single-request batching.

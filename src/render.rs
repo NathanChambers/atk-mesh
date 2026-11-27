@@ -209,6 +209,16 @@ impl CaptureVisibility {
 }
 
 pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Value, String> {
+    capture_with_depths(mesh, view, options, None)
+}
+
+pub(crate) fn capture_depths(mesh: &Mesh, view: &View, options: &Options) -> Result<Vec<f64>, String> {
+    let mut depths = Vec::new();
+    capture_with_depths(mesh, view, options, Some(&mut depths))?;
+    Ok(depths)
+}
+
+fn capture_with_depths(mesh: &Mesh, view: &View, options: &Options, depths: Option<&mut Vec<f64>>) -> Result<Value, String> {
     let width = options.width;
     let height = options.height;
     let background = match options.mode {
@@ -522,6 +532,10 @@ pub(super) fn capture(mesh: &Mesh, view: &View, options: &Options) -> Result<Val
                 });
             }
         }
+    }
+    if let Some(depths) = depths {
+        *depths = canvas.depths;
+        return Ok(Value::Null);
     }
     if options.mode == Mode::Topology || !options.clean {
         for (id, face) in &mesh.faces {

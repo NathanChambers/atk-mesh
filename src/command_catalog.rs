@@ -6,6 +6,7 @@ pub fn cli_tools() -> &'static [Value] {
     TOOLS.get_or_init(|| {
         let mut tools = legacy_tools();
         tools.extend(crate::feedback::tools());
+        tools.extend(crate::reconstruction::tools());
         tools.push(crate::help::tool());
         tools.sort_unstable_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
         tools
@@ -17,7 +18,7 @@ pub fn editor_tools() -> &'static [Value] {
     TOOLS.get_or_init(|| {
         cli_tools().iter().filter(|tool| {
             let name = tool["name"].as_str().expect("mesh tool name");
-            !crate::feedback::is_name(name) && !matches!(name, "reference_guides" | "visual_hull" | "replay")
+            !crate::feedback::is_name(name) && !crate::reconstruction::is_local(name) && name != "replay"
         }).cloned().collect()
     })
 }

@@ -41,6 +41,51 @@ fn pixels(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
+fn reconstructs_masked_depth_and_fits_visible_vertices() {
+    let root = std::env::temp_dir().join(format!("mesh-depth-reconstruction-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let write_png = |name: &str, bit_depth, data: &[u8]| {
+        let file = std::fs::File::create(root.join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, 64, 64);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(bit_depth);
+        encoder.write_header().unwrap().write_image_data(data).unwrap();
+    };
+    let mask: Vec<_> = (0..4096).map(|index| if index % 64 == 32 { 0 } else { 255 }).collect();
+    write_png("mask.png", png::BitDepth::Eight, &mask);
+    let depths: Vec<_> = (0..4096).flat_map(|index| {
+        let sample = if index % 64 < 16 { 0_u16 } else { u16::MAX };
+        sample.to_be_bytes()
+    }).collect();
+    write_png("depth.png", png::BitDepth::Sixteen, &depths);
+    let view = json!({
+        "camera":{"width":64,"height":64,"yaw":0,"pitch":0,"zoom":200},
+        "mask":"mask.png","depth":"depth.png","distance_range":[0,0.25],
+        "aspect":"front_three_quarter","source":"original"
+    });
+    let built = invoke(&root, json!({"command":"depth_mesh","view":view}), "surface.json");
+    assert_eq!(built["faces"], 2 * 63 * 60);
+    assert_eq!(built["reference_coverage"]["suggested_views"][0]["aspect"], "side");
+
+    let mut document = Document::empty();
+    document.execute(json!({"command":"object_create_box","name":"Visible","min":[-0.4,-0.4,-0.75],"max":[0.4,0.4,-0.5]})).unwrap();
+    document.execute(json!({"command":"object_create_box","name":"Hidden","min":[-0.25,-0.25,-1.25],"max":[-0.1,-0.1,-1]})).unwrap();
+    let project = document.execute(json!({"command":"save"})).unwrap();
+    let vertices: Vec<_> = project["mesh"]["vertices"].as_object().unwrap().iter()
+        .filter(|(_, point)| point[2].as_f64().unwrap() != -0.75)
+        .map(|(id, _)| id.parse::<u64>().unwrap()).collect();
+    std::fs::write(root.join("box.json"), project.to_string()).unwrap();
+    let fit = invoke(&root, json!({
+        "command":"fit_depth","view":view,"project":"box.json","vertices":vertices,
+        "strength":0.5,"maximum_move":1
+    }), "fit.json");
+    assert_eq!(fit["fitted_vertices"], 4);
+    assert_eq!(fit["skipped_vertices"], 8);
+    assert_eq!(fit["mean_target_distance_after"].as_f64().unwrap() * 2.0,
+        fit["mean_target_distance_before"].as_f64().unwrap());
+}
+
+#[test]
 fn reconstructs_box_and_exports_guides() {
     let root = std::env::temp_dir().join(format!("mesh-reconstruction-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();

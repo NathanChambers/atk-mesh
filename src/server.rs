@@ -1,3 +1,4 @@
+mod build_identity;
 #[allow(dead_code)]
 mod mcp;
 
@@ -20,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Print the viewer URL without launching a browser\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
+            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Accepted for compatibility\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
         );
         println!(
             "\nList meshes: atk-mesh-cli --port 7878 --list-workspaces\nStart an editor: atk-mesh --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | atk-mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--version" | "-V") {
-        println!("atk-mesh {}", env!("CARGO_PKG_VERSION"));
+        build_identity::print_version()?;
         println!("Features: batch, empty-workspaces, masters-only-uv, preview-reuse, camera-only-reviews");
         return Ok(());
     }
@@ -108,21 +109,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if matches!(&host, WorkspaceHost::Viewer { .. }) {
         println!("Project viewer: {url}");
         println!("List meshes: atk-mesh-cli --port {port} --list-workspaces");
-        if !headless {
-            #[cfg(target_os = "windows")]
-            let mut browser = {
-                let mut command = std::process::Command::new("rundll32.exe");
-                command.arg("url.dll,FileProtocolHandler");
-                command
-            };
-            #[cfg(target_os = "macos")]
-            let mut browser = std::process::Command::new("open");
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            let mut browser = std::process::Command::new("xdg-open");
-            if let Err(error) = browser.arg(&url).spawn() {
-                eprintln!("Could not launch browser ({error}). Open {url} to view projects.");
-            }
-        }
     } else {
         println!("Mesh editor API: {url}");
         println!("Send commands with atk-mesh-cli --port {port}");

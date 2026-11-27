@@ -2,6 +2,7 @@
 /artifacts/
 /workspaces/
 /.mesh/
+/.team/
 /sessions/
 /.playwright-mcp/
 /*.log

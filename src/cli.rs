@@ -1,3 +1,4 @@
+mod build_identity;
 #[allow(dead_code)]
 mod mcp;
 
@@ -50,7 +51,7 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("Use --file FILE as an alias for --input FILE, or --command JSON for inline input.");
         println!("Use --debug to record requests, replies, and session state. Use --replay FILE [--frame NUMBER] to read a recording.");
-        println!("\nLocal reconstruction commands: reference_guides (JSON/SVG) and visual_hull (outer volume estimate as project JSON/OBJ). Both take --input and --output, with no editor required.");
+        println!("\nLocal reconstruction commands: reference_guides (JSON/SVG), visual_hull, depth_mesh, fit_depth and reconstruct_volume (project JSON/OBJ). Use --input and --output with no editor required.");
         println!("\nMesh sculpting: send JSON help with topic \"local-sculpting\" to an editor for move_vertices, sculpt_stroke, and local connectivity checks.");
         println!("\nLocal feedback commands: feedback_submit (kind, summary, goal, observed) and feedback_list (optional kind, limit, before). Run as single JSON requests without an editor. MESH_FEEDBACK_DIR overrides the per-user inbox.");
         println!("\nUse --mcp with --port PORT for stdio MCP, or --commands for machine-readable help.");
@@ -58,7 +59,7 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--version" | "-V") {
-        println!("atk-mesh-cli {}", env!("CARGO_PKG_VERSION"));
+        build_identity::print_version()?;
         println!("Features: batch, request-correlation, configurable-read-timeout");
         return Ok(());
     }
@@ -189,7 +190,7 @@ fn run(replied: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut request: Value = serde_json::from_str(input.trim_start_matches('\u{feff}'))?;
     if !batch && !request.is_array() {
         let local = feedback::is_command(&request)
-            || matches!(request["command"].as_str(), Some("reference_guides" | "visual_hull"));
+            || request["command"].as_str().is_some_and(atk_mesh::reconstruction::is_local);
         if local {
             let mut recording = if debug {
                 Some(recording::Recording::create(Path::new(".mesh/recordings"), "", Value::Null)?)
@@ -309,7 +310,7 @@ fn execute_mcp_tool(name: &str, arguments: &Value, port: u16, timeout: Option<Du
     } else {
         mcp::native_command(name, arguments)?
     };
-    if feedback::is_command(&request) || matches!(name, "reference_guides" | "visual_hull") {
+    if feedback::is_command(&request) || atk_mesh::reconstruction::is_local(name) {
         let output = arguments.get("output_path").and_then(Value::as_str);
         return execute_local(&request, output);
     }

@@ -5,6 +5,51 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
 
+mod depth;
+mod volume;
+
+pub fn is_local(name: &str) -> bool {
+    matches!(name, "reference_guides" | "visual_hull" | "depth_mesh" | "fit_depth" | "reconstruct_volume")
+}
+
+pub(crate) fn tools() -> [Value; 3] {
+    let view = json!({
+        "type":"object",
+        "properties":{
+            "camera":{"type":"object"},
+            "mask":{"type":"string"},
+            "depth":{"type":"string"},
+            "distance_range":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
+            "maximum_jump":{"type":"number"},
+            "aspect":{"enum":["front","front_three_quarter","side","rear","top","bottom"]},
+            "source":{"enum":["original","generated"]}
+        },
+        "required":["camera","mask","depth","distance_range"],
+        "additionalProperties":false
+    });
+    let depth_mesh = crate::command_catalog::tool("depth_mesh", "Back-project a masked depth PNG into an editable open surface.", json!({
+        "type":"object",
+        "properties":{"view":view,"output_path":{"type":"string"}},
+        "required":["view","output_path"],
+        "additionalProperties":false
+    }));
+    let fit_depth = crate::command_catalog::tool("fit_depth", "Fit selected visible vertices in a saved project toward masked depth samples and optional landmark pixels.", json!({
+        "type":"object",
+        "properties":{
+            "view":view,"output_path":{"type":"string"},"project":{"type":"string"},
+            "vertices":{"type":"array","items":{"type":"integer"}},
+            "landmarks":{"type":"array","items":{
+                "type":"object","properties":{"vertex":{"type":"integer"},"pixel":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}},
+                "required":["vertex","pixel"],"additionalProperties":false
+            }},
+            "strength":{"type":"number"},"maximum_move":{"type":"number"}
+        },
+        "required":["view","project","vertices","output_path"],
+        "additionalProperties":false
+    }));
+    [depth_mesh, fit_depth, volume::tool()]
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Guide {
@@ -34,7 +79,7 @@ struct Mask {
 }
 
 pub fn run(request: &Value, output: Option<&str>) -> Result<Option<Value>, String> {
-    let Some(command @ ("reference_guides" | "visual_hull")) = request["command"].as_str() else {
+    let Some(command) = request["command"].as_str().filter(|name| is_local(name)) else {
         return Ok(None);
     };
     let output = Path::new(output.ok_or("reconstruction commands require --output FILE")?);
@@ -44,6 +89,16 @@ pub fn run(request: &Value, output: Option<&str>) -> Result<Option<Value>, Strin
                 return Err("reference_guides requires an .svg or .json output".into());
             }
             guides(request, extension(output, "svg"))?
+        }
+        "depth_mesh" | "fit_depth" | "reconstruct_volume" => {
+            if !extension(output, "obj") && !extension(output, "json") {
+                return Err(format!("{command} requires an .obj or .json output"));
+            }
+            if command == "reconstruct_volume" {
+                volume::run(request, output)?
+            } else {
+                depth::run(command, request, extension(output, "obj"))?
+            }
         }
         _ => {
             if !extension(output, "obj") && !extension(output, "json") {
@@ -67,6 +122,35 @@ fn parse_camera(options: &Value) -> Result<Camera, String> {
         return Err("each camera must be an object".into());
     }
     Camera::parse(options)
+}
+
+fn reference_coverage(views: &[Value]) -> Result<Value, String> {
+    let mut provided = Vec::new();
+    for view in views {
+        let aspect = match view.get("aspect") {
+            None => "unspecified",
+            Some(value) => value.as_str().filter(|name| matches!(*name, "front" | "front_three_quarter" | "side" | "rear" | "top" | "bottom"))
+                .ok_or("invalid reference aspect")?,
+        };
+        let source = match view.get("source") {
+            None => "unspecified",
+            Some(value) => value.as_str().filter(|name| matches!(*name, "original" | "generated"))
+                .ok_or("reference source must be original or generated")?,
+        };
+        provided.push(json!({"aspect":aspect,"source":source}));
+    }
+    let suggested: Vec<_> = [
+        ("side", "Depth and profile of features"),
+        ("rear", "Rear surfaces and attachment points"),
+    ].into_iter().filter(|(aspect, _)| {
+        !provided.iter().any(|view| view["aspect"] == *aspect && view["source"] != "generated")
+    }).map(|(aspect, helps_with)| json!({"aspect":aspect,"helps_with":helps_with})).collect();
+    let message = if suggested.is_empty() {
+        "Side and rear references were supplied."
+    } else {
+        "Assign existing views where available, or generate companion views to guide inferred geometry."
+    };
+    Ok(json!({"provided_views":provided,"suggested_views":suggested,"message":message}))
 }
 
 fn inside(camera: &Camera, [x, y]: [f64; 2]) -> bool {
@@ -190,6 +274,8 @@ fn read_png(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn hull(request: &Value, obj_output: bool) -> Result<(String, Value), String> {
+    let views = view_list(request, 2)?;
+    let coverage = reference_coverage(views)?;
     let bounds: [[f64; 3]; 2] = serde_json::from_value(request["bounds"].clone())
         .map_err(|_| "bounds must be [[min_x,min_y,min_z],[max_x,max_y,max_z]]")?;
     let span: [f64; 3] = std::array::from_fn(|axis| bounds[1][axis] - bounds[0][axis]);
@@ -211,7 +297,7 @@ fn hull(request: &Value, obj_output: bool) -> Result<(String, Value), String> {
         None => 1.0,
     };
     let mut masks = Vec::new();
-    for view in view_list(request, 2)? {
+    for view in views {
         let camera = parse_camera(&view["camera"])?;
         let path = view["mask"]
             .as_str()
@@ -350,6 +436,7 @@ fn hull(request: &Value, obj_output: bool) -> Result<(String, Value), String> {
         "vertices": vertices.len(),
         "faces": faces,
         "resolution": resolution,
+        "reference_coverage": coverage,
         "guidance": {
             "stage": "volume_estimate",
             "user_summary": "This first pass estimates the object's outer volume from silhouettes. Use it to check overall proportions before building the main forms and details.",
