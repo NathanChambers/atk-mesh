@@ -30,6 +30,8 @@ Add the [`atk-mesh` skill](.agents/skills/atk-mesh/SKILL.md) using your agent's 
 
 Run `atk-mesh` from your project directory. Open the printed URL to see the read-only viewer with a searchable list of saved workspaces under that directory. Choose a workspace to follow its saved updates, or use the folder button to switch. From there, orbit the model, switch between shaded and wireframe views, or preview an animation.
 
+To open the viewer from another device on a trusted local network, run `atk-mesh --lan --port 7878` and use `http://<host-LAN-IP>:7878` with the host computer's IPv4 address. By default, the viewer listens only on localhost.
+
 ## Learn more
 
 - [Command reference](docs/command-reference.md) for modeling, import, export, and debug recordings.

@@ -623,6 +623,40 @@ For openings, supply each inner contour in `holes`. Each hole must be strictly i
 {"command":"extrude_polygon","name":"Window wall","axis":"Z","depth":0.24,"points":[[0,0],[3,0],[3,2.4],[0,2.4]],"holes":[[[0.9,0.8],[2.1,0.8],[2.1,1.75],[0.9,1.75]]]}
 ```
 
+**Vector contour handoff**
+
+Query the editable shape with atk-vector `{"command":"contours","id":"sensor-enclosure","tolerance":0.05}`. For a solid outline, use one closed, non-hole contour from `result.contours`. Keep the vertices in their returned order and omit a duplicate closing point. If the source has holes, pass their rings separately in `holes` and leave bevel at zero.
+
+For the 64 × 42 mm enclosure example, the Vector bounds run from `[8,8]` to `[72,50]` with center `[40,29]`. One artboard unit is one millimeter. To extrude along Mesh's +Y axis, convert Vector `[x,y]` to Mesh profile `[(29-y)*0.001,(x-40)*0.001]`. This centers the profile, reverses the artboard's downwards Y, and converts to meters. For `axis:"Y"`, the profile pair is ordered as world `[Z,X]`.
+
+Build the Mesh request from the saved Vector command reply:
+
+```python
+import json
+from pathlib import Path
+
+reply = json.loads(Path("vector-contours-reply.json").read_text(encoding="utf-8"))
+contour, = reply["result"]["contours"]
+if not contour["closed"] or contour["hole"]:
+    raise ValueError("Expected one closed outer contour")
+
+points = contour["points"]
+if points[0] == points[-1]:
+    points = points[:-1]
+
+mesh_points = [[(29 - y) * 0.001, (x - 40) * 0.001] for x, y in points]
+command = {
+    "command": "extrude_polygon",
+    "name": "Enclosure base",
+    "axis": "Y",
+    "depth": 0.014,
+    "points": mesh_points,
+}
+print(json.dumps(command))
+```
+
+Send the generated JSON to the Mesh editor. Pass the returned object ID to `inspect_region` as `object` and check `result.bounds`. The expected bounds in meters are `[-0.032,0,-0.021]` to `[0.032,0.014,0.021]`, so the base has a 64 × 42 mm footprint and a 14 mm extrusion height. Resolve units and axis order before exporting if those dimensions differ.
+
 A small rectangular panel example uses a bevel of 0.02, below half its 0.065 depth (0.0325):
 
 ```json

@@ -5,7 +5,7 @@ mod mcp;
 use atk_mesh::{command_catalog, session::Session};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
         println!(
-            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --headless        Accepted for compatibility\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
+            "atk-mesh [ROOT | --project ROOT | --workspace PATH] [--port PORT] [--lan] [--headless]\n\nRun a read-only project viewer or an API-only editor for one mesh workspace.\n\n  ROOT              Serve saved meshes under this directory\n  --project ROOT    Serve saved meshes in the project (default current directory)\n  --workspace PATH  Edit one mesh workspace through the JSON API\n  --port PORT       Listen port (overrides MESH_PORT; omitted or 0 picks an available port)\n  --lan             Allow LAN access to the read-only viewer (default localhost, incompatible with --workspace)\n  --headless        Accepted for compatibility\n  -h, --help        Show this help\n  -V, --version     Show version\n\nFor CLI calls, use the port printed on startup. Stop with Ctrl+C."
         );
         println!(
             "\nList meshes: atk-mesh-cli --port 7878 --list-workspaces\nStart an editor: atk-mesh --workspace PATH --port 7879\nCommand discovery: echo '{{\"command\":\"help\"}}' | atk-mesh-cli --port 7879\nWorkflow guidance: send {{\"command\":\"help\",\"topic\":\"workflow\"}}."
@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut workspace = None;
     let mut project = None;
     let mut port = None;
+    let mut lan = false;
     let mut headless = false;
     let mut debug_session = false;
     let mut compress_recordings = false;
@@ -48,6 +49,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--workspace" => &mut workspace,
             "--project" => &mut project,
             "--port" => &mut port,
+            "--lan" => {
+                if lan {
+                    return Err("--lan specified more than once".into());
+                }
+                lan = true;
+                continue;
+            }
             "--debug" => {
                 debug_session = true;
                 continue;
@@ -85,6 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if workspace.is_some() && project.is_some() {
         return Err("A viewer root and --workspace are mutually exclusive".into());
     }
+    if lan && workspace.is_some() {
+        return Err("--lan is only available for the read-only project viewer and cannot be combined with --workspace".into());
+    }
     if debug_session && workspace.is_none() {
         return Err("--debug requires a workspace editor".into());
     }
@@ -96,18 +107,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .map_err(|_| "port must be an integer from 0 to 65535")?;
 
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let bind_ip = if lan { Ipv4Addr::UNSPECIFIED } else { Ipv4Addr::LOCALHOST };
+    let listener = TcpListener::bind((bind_ip, port))?;
     let mut host = if let Some(workspace) = workspace {
         WorkspaceHost::open_editor(PathBuf::from(workspace), debug_session || compress_recordings, true)?
     } else {
         let root = project.as_deref().unwrap_or(".");
         WorkspaceHost::open_viewer(Path::new(root))?
     };
-    let address = listener.local_addr()?;
-    let port = address.port();
-    let url = format!("http://{address}");
+    let port = listener.local_addr()?.port();
+    let url = format!("http://127.0.0.1:{port}");
     if matches!(&host, WorkspaceHost::Viewer { .. }) {
         println!("Project viewer: {url}");
+        if lan {
+            println!("LAN viewer: http://<host-LAN-IP>:{port}");
+        }
         println!("List meshes: atk-mesh-cli --port {port} --list-workspaces");
     } else {
         println!("Mesh editor API: {url}");
@@ -117,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for connection in listener.incoming() {
         match connection {
             Ok(mut stream) => {
-                if let Err(error) = handle(&mut stream, &mut host, &updates) {
+                if let Err(error) = handle(&mut stream, &mut host, &updates, lan) {
                     eprintln!("Request failed: {error}");
                 }
             }
@@ -131,7 +145,9 @@ fn handle(
     stream: &mut TcpStream,
     host: &mut WorkspaceHost,
     updates: &Arc<ViewerUpdates>,
+    lan: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let lan_client = lan && !stream.peer_addr()?.ip().is_loopback();
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -165,11 +181,6 @@ fn handle(
             }
         }
     }
-    if length > 64 * 1024 * 1024 {
-        return Err("body too large".into());
-    }
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body)?;
     let mut route: Vec<_> = first_line.split_whitespace().collect();
     let mut query = "";
     if let Some(target) = route.get_mut(1)
@@ -178,6 +189,18 @@ fn handle(
         *target = path;
         query = parameters;
     }
+    if lan_client && matches!(route.as_slice(), [method, path, _] if *method != "GET" || *path == "/mcp") {
+        write!(stream, "HTTP/1.0 404 Response\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot found")?;
+        stream.shutdown(Shutdown::Write)?;
+        return Ok(());
+    }
+
+    if length > 64 * 1024 * 1024 {
+        return Err("body too large".into());
+    }
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body)?;
+
     if let ["GET", "/api/events", _] = route.as_slice() {
         match workspace_updates(host, query) {
             Ok(source) if Arc::strong_count(updates) <= MAX_VIEWER_STREAMS => {

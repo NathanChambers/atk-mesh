@@ -160,6 +160,43 @@ fn read_update(reader: &mut BufReader<TcpStream>) -> String {
 }
 
 #[test]
+fn lan_viewer_reads_saved_mesh_over_loopback() {
+    let (viewer, port) = start_server_with_options(true, None, true, &["--lan"]);
+    common::write_cube_project(&viewer.workspace.join("model"));
+
+    let list = invoke(port, &["--list-workspaces"], "");
+    assert!(list.status.success());
+    assert_eq!(reply(&list)["result"]["workspaces"][0]["path"], "model");
+    assert_eq!(get(port, "/").0, 200);
+    assert_eq!(get(port, "/project.json?workspace=model").0, 200);
+
+    let rejected = invoke(port, &[], r#"{"command":"move","value":[0,1,0]}"#);
+    assert!(!rejected.status.success());
+    assert!(
+        reply(&rejected)["error"]
+            .as_str()
+            .unwrap()
+            .contains("read-only")
+    );
+}
+
+#[test]
+fn lan_option_rejects_workspace_editor_before_binding() {
+    let (viewer, port) = start_server(true);
+    let workspace = viewer.workspace.join("editor");
+    let output = Command::new(env!("CARGO_BIN_EXE_atk-mesh"))
+        .args(["--lan", "--workspace"])
+        .arg(&workspace)
+        .args(["--port", &port.to_string()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be combined with --workspace"));
+    assert!(!workspace.exists());
+}
+
+#[test]
 fn viewer_updates_cover_partial_batches_and_saved_edits() {
     let (viewer, viewer_port) = start_server(true);
     let (_editor, editor_port) = start_server_at(false, Some(viewer.workspace.join("model")), true);

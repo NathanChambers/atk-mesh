@@ -43,7 +43,9 @@ Send commands to port 7879 for this mesh. Give each additional editor its own wo
 
 The project viewer prints its browser URL. Each editor prints the address of its JSON API. The former `--headless` flag is accepted for compatibility.
 
-The server binds only to localhost. The CLI connects to localhost and copies artifacts using local file paths; run both on the same machine. It is a local development tool with no authentication. Use one command at a time when a sequence depends on returned IDs or revisions.
+The viewer binds to localhost by default. To share it on a trusted local network, add `--lan` to listen on all IPv4 interfaces. The startup output includes the localhost URL and a LAN URL hint with the selected port. From another device, replace `<host-LAN-IP>` with the host computer's LAN IPv4 address. The LAN viewer serves saved meshes and recordings without authentication.
+
+Workspace editors bind to localhost and reject `--lan`. The CLI connects to localhost and copies artifacts using local file paths, so run it on the editor's machine. Use one command at a time when a sequence depends on returned IDs or revisions.
 
 ## Give Codex project instructions
 
